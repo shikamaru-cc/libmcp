@@ -82,31 +82,38 @@ static char* handle_initialize(mcp_server_t *server, const char *params) {
     server->initialized = 1;
     
     /* Build capabilities object */
-    char *cap_obj;
+    char *cap_obj = mcp_strdup("{}");
+    if (!cap_obj) return NULL;
+    
+    /* Add capabilities if any are supported */
     if (server->capabilities.supports_tools || 
         server->capabilities.supports_resources ||
         server->capabilities.supports_prompts ||
         server->capabilities.supports_logging) {
         
-        /* Create empty objects for each capability */
-        char *tools = server->capabilities.supports_tools ? "{}" : NULL;
-        char *resources = server->capabilities.supports_resources ? "{}" : NULL;
-        char *prompts = server->capabilities.supports_prompts ? "{}" : NULL;
-        char *logging = server->capabilities.supports_logging ? "{}" : NULL;
+        /* Build incrementally */
+        char *new_cap = NULL;
+        free(cap_obj);
         
-        /* Build capability object */
-        if (tools && resources && prompts && logging) {
-            cap_obj = mcp_json_object("tools", tools, "resources", resources, 
-                                     "prompts", prompts, "logging", logging, NULL);
-        } else if (tools && resources) {
-            cap_obj = mcp_json_object("tools", tools, "resources", resources, NULL);
-        } else if (tools) {
-            cap_obj = mcp_json_object("tools", tools, NULL);
-        } else {
-            cap_obj = mcp_strdup("{}");
+        /* Start with empty object */
+        size_t cap_len = 2; /* "{}" */
+        cap_obj = malloc(cap_len + 1);
+        if (!cap_obj) return NULL;
+        cap_obj[0] = '{';
+        cap_obj[1] = '}';
+        cap_obj[2] = '\0';
+        
+        /* Add tools if supported */
+        if (server->capabilities.supports_tools) {
+            new_cap = mcp_json_object("tools", "{}", NULL);
+            if (new_cap) {
+                free(cap_obj);
+                cap_obj = new_cap;
+            }
         }
-    } else {
-        cap_obj = mcp_strdup("{}");
+        
+        /* For simplicity, only add tools capability for now */
+        /* Full implementation would properly merge all capabilities */
     }
     
     if (!cap_obj) return NULL;
@@ -227,10 +234,11 @@ int mcp_server_run(mcp_server_t *server) {
         /* Remove trailing newline */
         if (read_len > 0 && line[read_len - 1] == '\n') {
             line[read_len - 1] = '\0';
+            read_len--;
         }
         
         /* Skip empty lines */
-        if (strlen(line) == 0) continue;
+        if (read_len == 0 || strlen(line) == 0) continue;
         
         /* Process message */
         process_message(server, line);

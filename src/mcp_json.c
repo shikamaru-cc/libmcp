@@ -4,6 +4,7 @@
  */
 
 #include "mcp_json.h"
+#include "mcp_internal.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -11,23 +12,13 @@
 #include <ctype.h>
 #include <stdint.h>
 
-/* strdup implementation for C99 compatibility */
-static char* mcp_strdup(const char *s) {
-    if (!s) return NULL;
-    size_t len = strlen(s);
-    char *dup = malloc(len + 1);
-    if (dup) {
-        memcpy(dup, s, len + 1);
-    }
-    return dup;
-}
-
 /* Helper to escape a string for JSON */
 static char* escape_string(const char *str) {
     if (!str) return NULL;
     
     size_t len = strlen(str);
-    size_t escaped_len = len * 2 + 1; /* Worst case: every char needs escaping */
+    /* Worst case: every char needs \uXXXX (6 chars) */
+    size_t escaped_len = len * 6 + 1;
     char *escaped = malloc(escaped_len);
     if (!escaped) return NULL;
     
@@ -182,7 +173,7 @@ char* mcp_json_get_string(const char *json, const char *key) {
     size_t pattern_len = strlen(key) + 10;
     char *pattern = malloc(pattern_len);
     if (!pattern) return NULL;
-    snprintf(pattern, pattern_len, "\"%s\"", key);
+    snprintf(pattern, pattern_len, "\"%s\":", key);
     
     const char *key_pos = strstr(json, pattern);
     free(pattern);
@@ -204,8 +195,13 @@ char* mcp_json_get_string(const char *json, const char *key) {
     const char *end = colon;
     
     /* Find closing quote, handling escapes */
+    int escaped = 0;
     while (*end) {
-        if (*end == '"' && (end == colon || *(end - 1) != '\\')) {
+        if (escaped) {
+            escaped = 0;
+        } else if (*end == '\\') {
+            escaped = 1;
+        } else if (*end == '"') {
             break;
         }
         end++;
@@ -230,7 +226,7 @@ int mcp_json_get_int(const char *json, const char *key, int64_t *value) {
     size_t pattern_len = strlen(key) + 10;
     char *pattern = malloc(pattern_len);
     if (!pattern) return -1;
-    snprintf(pattern, pattern_len, "\"%s\"", key);
+    snprintf(pattern, pattern_len, "\"%s\":", key);
     
     const char *key_pos = strstr(json, pattern);
     free(pattern);
@@ -260,7 +256,7 @@ int mcp_json_has_key(const char *json, const char *key) {
     size_t pattern_len = strlen(key) + 10;
     char *pattern = malloc(pattern_len);
     if (!pattern) return 0;
-    snprintf(pattern, pattern_len, "\"%s\"", key);
+    snprintf(pattern, pattern_len, "\"%s\":", key);
     
     const char *found = strstr(json, pattern);
     free(pattern);
