@@ -1,0 +1,85 @@
+opencode.json
+
+# Compiled Object files
+*.o
+*.obj
+*.ko
+*.elf
+
+# Precompiled Headers
+*.gch
+*.pch
+
+# Libraries
+*.a
+*.la
+*.lo
+*.lib
+
+# Shared libraries (inc. Windows DLLs)
+*.dll
+*.so
+*.so.*
+*.dylib
+
+# Executables
+*.exe
+*.out
+*.app
+*.i*86
+*.x86_64
+*.hex
+
+# Debug files
+*.dSYM/
+*.su
+*.idb
+*.pdb
+
+# Build directories
+build/
+bin/
+dist/
+obj/
+out/
+target/
+
+# Dependency files
+*.d
+*.dep
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+*.cmake
+!CMakeLists.txt
+
+# Editor files
+*.swp
+*.swo
+*~
+
+# IDE
+.vscode/
+.idea/
+*.sublime-*
+
+# Test output
+*.log
+test_results/
+coverage/
+*.gcov
+*.gcno
+*.gcda
+htmlcov/
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
