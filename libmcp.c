@@ -286,6 +286,12 @@ static cJSON* handle_prompts_list(mcp_server_t* server, cJSON* params) {
     return response;
 }
 
+static void handle_notifications_initialized(mcp_server_t* server, cJSON* params) {
+    (void)server;
+    (void)params;
+    /* Client has finished initialization. No action needed for now. */
+}
+
 static cJSON* handle_prompts_get(mcp_server_t* server, cJSON* params) {
     cJSON* name_obj = cJSON_GetObjectItem(params, "name");
     cJSON* args_obj = cJSON_GetObjectItem(params, "arguments");
@@ -341,10 +347,20 @@ static int process_message(mcp_server_t* server, const char* json_str, char** re
         return MCP_ERROR_PROTOCOL;
     }
 
+    const char* method_name = method->valuestring;
+    int is_notification = (id == NULL);
+
+    /* Handle notifications (no id, no response) */
+    if (strcmp(method_name, "notifications/initialized") == 0) {
+        handle_notifications_initialized(server, params);
+        cJSON_Delete(request);
+        *response = NULL;
+        return MCP_ERROR_NONE;
+    }
+
+    /* Handle requests (have id, need response) */
     cJSON* result = NULL;
     int error = MCP_ERROR_NONE;
-
-    const char* method_name = method->valuestring;
 
     if (strcmp(method_name, "initialize") == 0) {
         result = handle_initialize(server, params);
@@ -357,6 +373,12 @@ static int process_message(mcp_server_t* server, const char* json_str, char** re
     } else if (strcmp(method_name, "prompts/get") == 0) {
         result = handle_prompts_get(server, params);
     } else {
+        /* Unknown method - only error if it's a request, ignore notifications */
+        if (is_notification) {
+            cJSON_Delete(request);
+            *response = NULL;
+            return MCP_ERROR_NONE;
+        }
         error = MCP_ERROR_NOT_IMPLEMENTED;
     }
 
@@ -399,15 +421,16 @@ int mcp_server_serve_stdio(mcp_server_t* server) {
         fprintf(stderr, "CLI: %s\n", json_str);
 
         char* response = NULL;
-        int error = process_message(server, json_str, &response);
+        process_message(server, json_str, &response);
 
-        fprintf(stderr, "SRV: %s\n", response);
-
-        fprintf(stdout, "%s\n", response);
-        fflush(stdout);
+        if (response) {
+            fprintf(stderr, "SRV: %s\n", response);
+            fprintf(stdout, "%s\n", response);
+            fflush(stdout);
+            free(response);
+        }
 
         free(json_str);
-        free(response);
     }
 
     return MCP_ERROR_NONE;
