@@ -5,33 +5,23 @@ Minimal MCP (Model Context Protocol) library in C. Design goal: single header fi
 
 ## Build Commands
 ```bash
-# Build the library
-gcc -c -Wall -Wextra -O2 -fPIC src/libmcp.c -o build/libmcp.o
-ar rcs build/libmcp.a build/libmcp.o
+# Build the example
+make
 
-# Build shared library
-gcc -shared -o build/libmcp.so src/libmcp.c
+# Clean build artifacts
+make clean
 
-# Build example program
-gcc -Wall -Wextra -O2 -I src examples/hello.c -L build -lmcp -o build/hello
-
-# Build tests
-gcc -Wall -Wextra -O2 -I src -I tests tests/*.c src/libmcp.c -o build/run_tests
-
-# Run all tests
-./build/run_tests
-
-# Run single test (modify main in tests/test_runner.c to select)
-./build/run_tests --test=test_name
+# Run the example
+./build/hello
 ```
 
 ## Linting
 ```bash
 # Static analysis with cppcheck
-cppcheck --enable=all --suppress=missingIncludeSystem src/
+cppcheck --enable=all --suppress=missingIncludeSystem *.c
 
 # Scan with clang-analyzer
-scan-build gcc -c src/libmcp.c
+scan-build gcc -c libmcp.c cJSON.c
 ```
 
 ## Code Style Guidelines
@@ -109,23 +99,14 @@ mcp_connection_t* mcp_connect(const char* host, int port);
 - Avoid global state - require context objects
 - Provide both synchronous and async APIs where appropriate
 
-### Testing
-- Write tests in `tests/` directory with `_test.c` suffix
-- Use simple test framework or write custom test runner
-- Test both success and error paths
-- Test boundary conditions (empty strings, max sizes, NULL pointers)
-- Include memory leak checks (valgrind)
-
 ## Project Structure
 ```
-libmcp.h    # Single public header
-libmcp.c    # Single implementation file
+libmcp.h        # Public API header
+libmcp.c        # Implementation
+cJSON.h         # JSON library header
+cJSON.c         # JSON library implementation
 examples/
-  hello.c     # Example usage
-tests/
-  test_runner.c   # Test runner main
-  connection_test.c
-  message_test.c
+  hello.c       # Example usage
 build/          # Build output (gitignored)
 Makefile        # Build rules
 ```
