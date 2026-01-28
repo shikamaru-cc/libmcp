@@ -1,3 +1,4 @@
+#define _POSIX_C_SOURCE 200809L
 #include "libmcp.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -38,33 +39,26 @@ struct mcp_connection {
     FILE* out;
 };
 
-static char* read_jsonrpc_message(int fd) {
-    static char buffer[MCP_BUFFER_SIZE];
-    char* msg = NULL;
-    size_t msglen = 0;
-    while (1) {
-        ssize_t rc = read(fd, buffer, sizeof(buffer));
-        if (rc < 0) {
-            free(msg);
-            return NULL;
-        }
+static char* read_jsonrpc_message(FILE* in) {
+    if (!in) return NULL;
 
-        if (rc == 0) {
-            return msg;
-        }
+    char* line = NULL;
+    size_t cap = 0;
+    ssize_t n = getline(&line, &cap, in);
+    if (n == -1) {
+        free(line);
+        return NULL; /* EOF or error */
+    }
 
-        msg = realloc(msg, msglen + rc);
-        memcpy(msg + msglen, buffer, rc);
-        msglen += rc;
-
-        if (msg[msglen-1] == '\n') {
-            msg[msglen-1] = '\0';
-            if (msglen > 2 && msg[msglen-2] == '\r') {
-                msg[msglen-2] = '\0';
-            }
-            return msg;
+    /* Strip trailing LF and optional CR */
+    if (n > 0 && line[n-1] == '\n') {
+        line[n-1] = '\0';
+        if (n > 1 && line[n-2] == '\r') {
+            line[n-2] = '\0';
         }
     }
+
+    return line; /* caller must free() */
 }
 
 static int write_jsonrpc_message(FILE* out, const char* json_str) {
@@ -413,7 +407,7 @@ int mcp_server_serve_stdio(mcp_server_t* server) {
     server->running = 1;
 
     while (server->running) {
-        char* json_str = read_jsonrpc_message(STDIN_FILENO);
+        char* json_str = read_jsonrpc_message(stdin);
         if (!json_str) {
             break;
         }
