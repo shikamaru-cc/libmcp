@@ -419,8 +419,10 @@ int mcp_server_serve_stdio(mcp_server_t* server) {
 
         if (response) {
             fprintf(stderr, "SRV: %s\n", response);
-            fprintf(stdout, "%s\n", response);
-            fflush(stdout);
+            /* Use helper to write JSON-RPC response and flush */
+            if (write_jsonrpc_message(stdout, response) != 0) {
+                fprintf(stderr, "mcp: failed to write response\n");
+            }
             free(response);
         }
 
