@@ -23,6 +23,26 @@ typedef enum {
     MCP_ERROR_NOT_IMPLEMENTED = -6
 } mcp_error_t;
 
+typedef enum {
+    MCP_INPUT_SCHEMA_TYPE_NUMBER = 1 << 0,
+    MCP_INPUT_SCHEMA_TYPE_STRING = 1 << 1,
+    MCP_INPUT_SCHEMA_TYPE_BOOL   = 1 << 2,
+    MCP_INPUT_SCHEMA_TYPE_ARRAY  = 1 << 3,
+    MCP_INPUT_SCHEMA_TYPE_OBJECT = 1 << 4,
+} mcp_input_schema_type_e;
+
+typedef struct mcp_input_schema {
+    const char* name;
+    const char* description;
+    bool required;
+
+    mcp_input_schema_type_e type;
+    mcp_input_schema_type_e type_arr; // only make sense for type == array
+
+    struct mcp_input_schema* properties;
+    int properties_count;
+} mcp_input_schema_t;
+
 typedef struct {
     const char* name;
     const char* description;

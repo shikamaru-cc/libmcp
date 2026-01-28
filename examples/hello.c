@@ -3,6 +3,12 @@
 #include <string.h>
 #include "libmcp.h"
 
+static mcp_input_schema_t schema[] = {
+    { .name = "a",
+      .type = MCP_INPUT_SCHEMA_TYPE_NUMBER,
+    },
+};
+
 static int add_handler(const char* json_args, char** json_result, void* user_data) {
     (void)user_data;
 
