@@ -12,18 +12,11 @@
 #define MCP_MAX_PROMPTS 128
 #define MCP_BUFFER_SIZE 8192
 
-typedef struct {
-    mcp_prompt_t prompt;
-    mcp_prompt_handler_t handler;
-    void* user_data;
-} mcp_registered_prompt_t;
 
 struct mcp_server {
     char* name;
     char* version;
     int tool_count;
-    mcp_registered_prompt_t prompts[MCP_MAX_PROMPTS];
-    int prompt_count;
     int running;
 
     mcp_tool_t tools[MCP_MAX_TOOLS];
@@ -150,27 +143,7 @@ void mcp_server_register_tool(mcp_server_t* server, const mcp_tool_t* tool) {
     server->tool_count++;
 }
 
-int mcp_server_register_prompt(
-    mcp_server_t* server,
-    const mcp_prompt_t* prompt,
-    mcp_prompt_handler_t handler,
-    void* user_data
-) {
-    if (!server || !prompt || !prompt->name || !handler) {
-        return MCP_ERROR_INVALID_ARGUMENT;
-    }
-
-    if (server->prompt_count >= MCP_MAX_PROMPTS) {
-        return MCP_ERROR_OUT_OF_MEMORY;
-    }
-
-    server->prompts[server->prompt_count].prompt = *prompt;
-    server->prompts[server->prompt_count].handler = handler;
-    server->prompts[server->prompt_count].user_data = user_data;
-    server->prompt_count++;
-
-    return MCP_ERROR_NONE;
-}
+/* Prompt API removed in this build */
 
 static cJSON* handle_initialize(mcp_server_t* server, cJSON* params) {
     (void)params;
@@ -187,10 +160,7 @@ static cJSON* handle_initialize(mcp_server_t* server, cJSON* params) {
     cJSON_AddBoolToObject(tools_cap, "listChanged", cJSON_False);
     cJSON_AddItemToObject(capabilities, "tools", tools_cap);
 
-    /* Prompts capability - only if prompts are registered or will be */
-    cJSON* prompts_cap = cJSON_CreateObject();
-    cJSON_AddBoolToObject(prompts_cap, "listChanged", cJSON_False);
-    cJSON_AddItemToObject(capabilities, "prompts", prompts_cap);
+    /* Prompts capability removed */
 
     cJSON_AddItemToObject(response, "capabilities", capabilities);
 
@@ -332,21 +302,10 @@ static cJSON* handle_tools_call(mcp_server_t* server, cJSON* params) {
     return NULL;
 }
 
+/* Prompts removed from this minimal implementation */
 static cJSON* handle_prompts_list(mcp_server_t* server, cJSON* params) {
-    (void)params;
-    cJSON* prompts = cJSON_CreateArray();
-
-    for (int i = 0; i < server->prompt_count; i++) {
-        cJSON* prompt = cJSON_CreateObject();
-        cJSON_AddStringToObject(prompt, "name", server->prompts[i].prompt.name);
-        cJSON_AddStringToObject(prompt, "description",
-            server->prompts[i].prompt.description ? server->prompts[i].prompt.description : "");
-        cJSON_AddItemToArray(prompts, prompt);
-    }
-
-    cJSON* response = cJSON_CreateObject();
-    cJSON_AddItemToObject(response, "prompts", prompts);
-    return response;
+    (void)server; (void)params;
+    return NULL;
 }
 
 static void handle_notifications_initialized(mcp_server_t* server, cJSON* params) {
@@ -356,43 +315,8 @@ static void handle_notifications_initialized(mcp_server_t* server, cJSON* params
 }
 
 static cJSON* handle_prompts_get(mcp_server_t* server, cJSON* params) {
-    cJSON* name_obj = cJSON_GetObjectItem(params, "name");
-    cJSON* args_obj = cJSON_GetObjectItem(params, "arguments");
-
-    if (!name_obj || !cJSON_IsString(name_obj)) {
-        return NULL;
-    }
-
-    const char* name = name_obj->valuestring;
-    char* args_str = args_obj ? cJSON_PrintUnformatted(args_obj) : strdup("{}");
-
-    char* prompt_text = NULL;
-    int error = MCP_ERROR_NOT_FOUND;
-
-    for (int i = 0; i < server->prompt_count; i++) {
-        if (strcmp(server->prompts[i].prompt.name, name) == 0) {
-            error = server->prompts[i].handler(args_str, &prompt_text,
-                server->prompts[i].user_data);
-            break;
-        }
-    }
-
-    free(args_str);
-
-    if (error != MCP_ERROR_NONE || !prompt_text) {
-        return NULL;
-    }
-
-    cJSON* result = cJSON_CreateObject();
-    cJSON* messages = cJSON_CreateArray();
-    cJSON* msg = cJSON_CreateObject();
-    cJSON_AddStringToObject(msg, "role", "user");
-    cJSON_AddStringToObject(msg, "content", prompt_text);
-    cJSON_AddItemToArray(messages, msg);
-    cJSON_AddItemToObject(result, "messages", messages);
-
-    free(prompt_text);
-    return result;
+    (void)server; (void)params;
+    return NULL;
 }
 
 static int process_message(mcp_server_t* server, const char* json_str, char** response) {

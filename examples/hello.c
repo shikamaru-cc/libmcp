@@ -1,8 +1,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "libmcp.h"
-#include "cJSON.h"
+#include "../libmcp.h"
+#include "../cJSON.h"
 
 static int add_handler(cJSON* params, mcp_content_array_t* contents) {
     cJSON* a = cJSON_GetObjectItem(params, "a");
@@ -79,14 +79,6 @@ static mcp_tool_t tool_weather = {
     },
 };
 
-static int prompt_handler(const char* json_args, char** prompt_text, void* user_data) {
-    (void)user_data;
-    (void)json_args;
-
-    *prompt_text = strdup("This is a sample prompt template. You can use it as a starting point.");
-    return *prompt_text ? 0 : MCP_ERROR_OUT_OF_MEMORY;
-}
-
 int main(void) {
     mcp_server_t* server = mcp_server_create();
     if (!server) {
@@ -101,8 +93,7 @@ int main(void) {
     mcp_server_register_tool(server, &tool_multiply);
     mcp_server_register_tool(server, &tool_weather);
 
-    mcp_prompt_t sample_prompt = {"sample", "A sample prompt template"};
-    mcp_server_register_prompt(server, &sample_prompt, prompt_handler, NULL);
+    /* prompts removed - prompt handler unused */
 
     fprintf(stderr, "MCP Example Server running...\n");
 

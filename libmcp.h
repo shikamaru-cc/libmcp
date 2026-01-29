@@ -89,30 +89,14 @@ int mcp_content_add_text(mcp_content_array_t* array, sds text);
 int mcp_content_add_textf(mcp_content_array_t* array, const char* fmt, ...);
 int mcp_content_add_image(mcp_content_array_t* array, sds data, sds mime_type);
 
-typedef struct {
-    const char* name;
-    const char* description;
-} mcp_prompt_t;
 
-typedef int (*mcp_prompt_handler_t)(
-    const char* json_args,
-    char** prompt_text,
-    void* user_data
-);
-
+/* Server lifecycle and registration */
 mcp_server_t* mcp_server_create(void);
 
 void mcp_server_destroy(mcp_server_t* server);
 int mcp_server_set_name(mcp_server_t* server, const char* name);
 int mcp_server_set_version(mcp_server_t* server, const char* version);
 void mcp_server_register_tool(mcp_server_t* server, const mcp_tool_t* tool);
-
-int mcp_server_register_prompt(
-    mcp_server_t* server,
-    const mcp_prompt_t* prompt,
-    mcp_prompt_handler_t handler,
-    void* user_data
-);
 
 int mcp_server_serve(mcp_server_t* server, const char* address, int port);
 
