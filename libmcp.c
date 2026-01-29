@@ -405,13 +405,10 @@ int mcp_server_serve_stdio(mcp_server_t* server) {
             break;
         }
 
-        fprintf(stderr, "CLI: %s\n", json_str);
-
         char* response = NULL;
         process_message(server, json_str, &response);
 
         if (response) {
-            fprintf(stderr, "SRV: %s\n", response);
             /* Use helper to write JSON-RPC response and flush */
             if (write_jsonrpc_message(stdout, response) != 0) {
                 fprintf(stderr, "mcp: failed to write response\n");
