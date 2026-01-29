@@ -4,6 +4,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include "cJSON.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -72,12 +73,7 @@ int mcp_server_set_name(mcp_server_t* server, const char* name);
 
 int mcp_server_set_version(mcp_server_t* server, const char* version);
 
-int mcp_server_register_tool(
-    mcp_server_t* server,
-    const mcp_tool_t* tool,
-    mcp_tool_handler_t handler,
-    void* user_data
-);
+void mcp_server_register_tool(mcp_server_t* server, const mcp_tool_t* tool);
 
 int mcp_server_register_prompt(
     mcp_server_t* server,

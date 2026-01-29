@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "libmcp.h"
+#include "cJSON.h"
 
 static mcp_input_schema_t schema[] = {
     { .name = "a",
@@ -10,30 +11,24 @@ static mcp_input_schema_t schema[] = {
     mcp_input_schema_null
 };
 
-static int add_handler(const char* json_args, char** json_result, void* user_data) {
-    (void)user_data;
-
-    int a = 0, b = 0;
-    sscanf(json_args, "{\"a\":%d,\"b\":%d}", &a, &b);
-
-    char result[128];
-    snprintf(result, sizeof(result), "{\"result\":%d}", a + b);
-
-    *json_result = strdup(result);
-    return *json_result ? 0 : MCP_ERROR_OUT_OF_MEMORY;
+static cJSON* add_handler(cJSON* params) {
+    cJSON* a = cJSON_GetObjectItem(params, "a");
+    cJSON* b = cJSON_GetObjectItem(params, "b");
+    int ai = cJSON_IsNumber(a) ? a->valueint : 0;
+    int bi = cJSON_IsNumber(b) ? b->valueint : 0;
+    cJSON* result = cJSON_CreateObject();
+    cJSON_AddNumberToObject(result, "result", ai + bi);
+    return result;
 }
 
-static int multiply_handler(const char* json_args, char** json_result, void* user_data) {
-    (void)user_data;
-
-    int a = 0, b = 0;
-    sscanf(json_args, "{\"a\":%d,\"b\":%d}", &a, &b);
-
-    char result[128];
-    snprintf(result, sizeof(result), "{\"result\":%d}", a * b);
-
-    *json_result = strdup(result);
-    return *json_result ? 0 : MCP_ERROR_OUT_OF_MEMORY;
+static cJSON* multiply_handler(cJSON* params) {
+    cJSON* a = cJSON_GetObjectItem(params, "a");
+    cJSON* b = cJSON_GetObjectItem(params, "b");
+    int ai = cJSON_IsNumber(a) ? a->valueint : 0;
+    int bi = cJSON_IsNumber(b) ? b->valueint : 0;
+    cJSON* result = cJSON_CreateObject();
+    cJSON_AddNumberToObject(result, "result", ai * bi);
+    return result;
 }
 
 static int prompt_handler(const char* json_args, char** prompt_text, void* user_data) {
@@ -54,11 +49,11 @@ int main(void) {
     mcp_server_set_name(server, "example-calculator");
     mcp_server_set_version(server, "1.0.0");
 
-    mcp_tool_t add_tool = {"add", "Add two numbers"};
-    mcp_tool_t multiply_tool = {"multiply", "Multiply two numbers"};
+    mcp_tool_t add_tool = {"add", "Add two numbers", add_handler, {0}};
+    mcp_tool_t multiply_tool = {"multiply", "Multiply two numbers", multiply_handler, {0}};
 
-    mcp_server_register_tool(server, &add_tool, add_handler, NULL);
-    mcp_server_register_tool(server, &multiply_tool, multiply_handler, NULL);
+    mcp_server_register_tool(server, &add_tool);
+    mcp_server_register_tool(server, &multiply_tool);
 
     mcp_prompt_t sample_prompt = {"sample", "A sample prompt template"};
     mcp_server_register_prompt(server, &sample_prompt, prompt_handler, NULL);

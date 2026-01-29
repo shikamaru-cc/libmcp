@@ -5,17 +5,10 @@
 #include <string.h>
 #include <errno.h>
 #include <unistd.h>
-#include "cJSON.h"
 
 #define MCP_MAX_TOOLS 128
 #define MCP_MAX_PROMPTS 128
 #define MCP_BUFFER_SIZE 8192
-
-typedef struct {
-    mcp_tool_t tool;
-    mcp_tool_handler_t handler;
-    void* user_data;
-} mcp_registered_tool_t;
 
 typedef struct {
     mcp_prompt_t prompt;
@@ -26,11 +19,12 @@ typedef struct {
 struct mcp_server {
     char* name;
     char* version;
-    mcp_registered_tool_t tools[MCP_MAX_TOOLS];
     int tool_count;
     mcp_registered_prompt_t prompts[MCP_MAX_PROMPTS];
     int prompt_count;
     int running;
+
+    mcp_tool_t tools[MCP_MAX_TOOLS];
 };
 
 struct mcp_connection {
@@ -138,26 +132,20 @@ int mcp_server_set_version(mcp_server_t* server, const char* version) {
     return MCP_ERROR_NONE;
 }
 
-int mcp_server_register_tool(
-    mcp_server_t* server,
-    const mcp_tool_t* tool,
-    mcp_tool_handler_t handler,
-    void* user_data
-) {
-    if (!server || !tool || !tool->name || !handler) {
-        return MCP_ERROR_INVALID_ARGUMENT;
+void mcp_server_register_tool(mcp_server_t* server, const mcp_tool_t* tool) {
+    if (!server || !tool || !tool->name || !tool->handler) {
+        fprintf(stderr, "mcp_server_register_tool: invalid argument\n");
+        return;
     }
 
     if (server->tool_count >= MCP_MAX_TOOLS) {
-        return MCP_ERROR_OUT_OF_MEMORY;
+        fprintf(stderr, "mcp_server_register_tool: max tools reached\n");
+        return;
     }
 
-    server->tools[server->tool_count].tool = *tool;
-    server->tools[server->tool_count].handler = handler;
-    server->tools[server->tool_count].user_data = user_data;
+    /* copy tool by value into server registry */
+    server->tools[server->tool_count] = *tool;
     server->tool_count++;
-
-    return MCP_ERROR_NONE;
 }
 
 int mcp_server_register_prompt(
@@ -219,9 +207,9 @@ static cJSON* handle_tools_list(mcp_server_t* server, cJSON* params) {
 
     for (int i = 0; i < server->tool_count; i++) {
         cJSON* tool = cJSON_CreateObject();
-        cJSON_AddStringToObject(tool, "name", server->tools[i].tool.name);
+        cJSON_AddStringToObject(tool, "name", server->tools[i].name);
         cJSON_AddStringToObject(tool, "description",
-            server->tools[i].tool.description ? server->tools[i].tool.description : "");
+            server->tools[i].description ? server->tools[i].description : "");
         cJSON_AddItemToArray(tools, tool);
     }
 
@@ -239,28 +227,16 @@ static cJSON* handle_tools_call(mcp_server_t* server, cJSON* params) {
     }
 
     const char* name = name_obj->valuestring;
-    char* args_str = args_obj ? cJSON_PrintUnformatted(args_obj) : strdup("{}");
-
-    char* result_str = NULL;
-    int error = MCP_ERROR_NOT_FOUND;
 
     for (int i = 0; i < server->tool_count; i++) {
-        if (strcmp(server->tools[i].tool.name, name) == 0) {
-            error = server->tools[i].handler(args_str, &result_str,
-                server->tools[i].user_data);
-            break;
+        if (strcmp(server->tools[i].name, name) == 0) {
+            /* call tool handler that accepts cJSON* and returns cJSON* */
+            cJSON* res = server->tools[i].handler(args_obj);
+            return res; /* caller will integrate/responsibly free via cJSON_Delete */
         }
     }
 
-    free(args_str);
-
-    if (error != MCP_ERROR_NONE || !result_str) {
-        return NULL;
-    }
-
-    cJSON* result = cJSON_Parse(result_str);
-    free(result_str);
-    return result;
+    return NULL;
 }
 
 static cJSON* handle_prompts_list(mcp_server_t* server, cJSON* params) {
