@@ -1,5 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include "libmcp.h"
+#include "sds.h"
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -293,21 +295,36 @@ static cJSON* handle_tools_call(mcp_server_t* server, cJSON* params) {
 
     for (int i = 0; i < server->tool_count; i++) {
         if (strcmp(server->tools[i].name, name->valuestring) == 0) {
-            char* text = server->tools[i].handler(args);
-            if (text == NULL)
+            mcp_content_array_t* contents = mcp_content_array_create();
+            if (!contents) return NULL;
+
+            int err = server->tools[i].handler(args, contents);
+            if (err != MCP_ERROR_NONE || contents->count == 0) {
+                mcp_content_array_free(contents);
                 return NULL;
+            }
 
             cJSON* result = cJSON_CreateObject();
-
             cJSON* content = cJSON_CreateArray();
             cJSON_AddItemToObject(result, "content", content);
 
-            cJSON* content_obj = cJSON_CreateObject();
-            cJSON_AddStringToObject(content_obj, "type", "text");
-            cJSON_AddStringToObject(content_obj, "text", text);
-            cJSON_AddItemToArray(content, content_obj);
+            for (int j = 0; j < contents->count; j++) {
+                mcp_content_item_t* it = &contents->items[j];
+                cJSON* content_obj = cJSON_CreateObject();
+                if (it->type == MCP_CONTENT_TYPE_TEXT) {
+                    cJSON_AddStringToObject(content_obj, "type", "text");
+                    cJSON_AddStringToObject(content_obj, "text", it->text ? it->text : "");
+                } else if (it->type == MCP_CONTENT_TYPE_IMAGE) {
+                    cJSON_AddStringToObject(content_obj, "type", "image");
+                    cJSON_AddStringToObject(content_obj, "data", it->data ? it->data : "");
+                    cJSON_AddStringToObject(content_obj, "mimeType", it->mime_type ? it->mime_type : "");
+                } else {
+                    cJSON_AddStringToObject(content_obj, "type", "unknown");
+                }
+                cJSON_AddItemToArray(content, content_obj);
+            }
 
-            free(text);
+            mcp_content_array_free(contents);
             return result;
         }
     }
@@ -481,6 +498,83 @@ int mcp_server_serve_stdio(mcp_server_t* server) {
         free(json_str);
     }
 
+    return MCP_ERROR_NONE;
+}
+
+/* Content array implementation */
+mcp_content_array_t* mcp_content_array_create(void) {
+    mcp_content_array_t* array = malloc(sizeof(mcp_content_array_t));
+    if (!array) return NULL;
+    array->count = 0;
+    array->capacity = 4;
+    array->items = calloc(array->capacity, sizeof(mcp_content_item_t));
+    if (!array->items) {
+        free(array);
+        return NULL;
+    }
+    return array;
+}
+
+void mcp_content_array_free(mcp_content_array_t* array) {
+    if (!array) return;
+    for (int i = 0; i < array->count; i++) {
+        sdsfree(array->items[i].text);
+        sdsfree(array->items[i].data);
+        sdsfree(array->items[i].mime_type);
+    }
+    free(array->items);
+    free(array);
+}
+
+static int mcp_content_array_ensure(mcp_content_array_t* array) {
+    if (array->count < array->capacity) return MCP_ERROR_NONE;
+    int newcap = array->capacity * 2;
+    mcp_content_item_t* n = realloc(array->items, newcap * sizeof(mcp_content_item_t));
+    if (!n) return MCP_ERROR_OUT_OF_MEMORY;
+    array->items = n;
+    array->capacity = newcap;
+    return MCP_ERROR_NONE;
+}
+
+int mcp_content_add_text(mcp_content_array_t* array, sds text) {
+    if (!array || !text) {
+        sdsfree(text);
+        return MCP_ERROR_INVALID_ARGUMENT;
+    }
+    int err = mcp_content_array_ensure(array);
+    if (err != MCP_ERROR_NONE) { sdsfree(text); return err; }
+    mcp_content_item_t* it = &array->items[array->count++];
+    it->type = MCP_CONTENT_TYPE_TEXT;
+    it->text = text;
+    it->data = NULL;
+    it->mime_type = NULL;
+    return MCP_ERROR_NONE;
+}
+
+int mcp_content_add_textf(mcp_content_array_t* array, const char* fmt, ...) {
+    if (!array || !fmt) return MCP_ERROR_INVALID_ARGUMENT;
+    va_list ap;
+    va_start(ap, fmt);
+    sds s = sdsempty();
+    s = sdscatvprintf(s, fmt, ap);
+    va_end(ap);
+    if (!s) return MCP_ERROR_OUT_OF_MEMORY;
+    return mcp_content_add_text(array, s);
+}
+
+int mcp_content_add_image(mcp_content_array_t* array, sds data, sds mime_type) {
+    if (!array || !data || !mime_type) {
+        sdsfree(data);
+        sdsfree(mime_type);
+        return MCP_ERROR_INVALID_ARGUMENT;
+    }
+    int err = mcp_content_array_ensure(array);
+    if (err != MCP_ERROR_NONE) { sdsfree(data); sdsfree(mime_type); return err; }
+    mcp_content_item_t* it = &array->items[array->count++];
+    it->type = MCP_CONTENT_TYPE_IMAGE;
+    it->text = NULL;
+    it->data = data;
+    it->mime_type = mime_type;
     return MCP_ERROR_NONE;
 }
 

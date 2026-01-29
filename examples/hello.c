@@ -4,31 +4,25 @@
 #include "libmcp.h"
 #include "cJSON.h"
 
-static char* add_handler(cJSON* params) {
+static int add_handler(cJSON* params, mcp_content_array_t* contents) {
     cJSON* a = cJSON_GetObjectItem(params, "a");
     cJSON* b = cJSON_GetObjectItem(params, "b");
     int ai = cJSON_IsNumber(a) ? a->valueint : 0;
     int bi = cJSON_IsNumber(b) ? b->valueint : 0;
-    char* s = (char *)malloc(128);
-    sprintf(s, "%d", ai+bi);
-    return s;
+    return mcp_content_add_textf(contents, "%d", ai + bi);
 }
 
-static char* multiply_handler(cJSON* params) {
+static int multiply_handler(cJSON* params, mcp_content_array_t* contents) {
     cJSON* a = cJSON_GetObjectItem(params, "a");
     cJSON* b = cJSON_GetObjectItem(params, "b");
     int ai = cJSON_IsNumber(a) ? a->valueint : 0;
     int bi = cJSON_IsNumber(b) ? b->valueint : 0;
-    char* s = (char *)malloc(128);
-    sprintf(s, "%d", ai*bi);
-    return s;
+    return mcp_content_add_textf(contents, "%d", ai * bi);
 }
 
-static char* weather_handler(cJSON* params) {
+static int weather_handler(cJSON* params, mcp_content_array_t* contents) {
     (void)params;
-    char* s = (char *)malloc(128);
-    sprintf(s, "%s", "sunny day baby");
-    return s;
+    return mcp_content_add_text(contents, sdsnew("sunny day baby"));
 }
 
 static mcp_input_schema_t tool_add_schema[] = {

@@ -5,6 +5,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "cJSON.h"
+#include "sds.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -45,7 +46,12 @@ typedef struct mcp_input_schema {
 
 #define mcp_input_schema_null { .type = MCP_INPUT_SCHEMA_TYPE_NULL }
 
-typedef char* (*mcp_tool_handler_t)(cJSON* params);
+/* Tool handler returns int error code and fills provided content array.
+ * The handler must return MCP_ERROR_NONE on success. */
+typedef struct mcp_content_item mcp_content_item_t;
+typedef struct mcp_content_array mcp_content_array_t;
+
+typedef int (*mcp_tool_handler_t)(cJSON* params, mcp_content_array_t* contents);
 
 typedef struct {
     const char* name;
@@ -53,6 +59,35 @@ typedef struct {
     mcp_tool_handler_t handler;
     mcp_input_schema_t input_schema;
 } mcp_tool_t;
+
+/* Content API */
+typedef enum {
+    MCP_CONTENT_TYPE_TEXT = 0,
+    MCP_CONTENT_TYPE_IMAGE = 1,
+    MCP_CONTENT_TYPE_RESOURCE = 2
+} mcp_content_type_t;
+
+struct mcp_content_item {
+    mcp_content_type_t type;
+    sds text;      /* owned */
+    sds data;      /* owned: image data (base64) or resource */
+    sds mime_type; /* owned */
+};
+
+struct mcp_content_array {
+    mcp_content_item_t* items;
+    int count;
+    int capacity;
+};
+
+/* Content array management (libmcp takes ownership of passed sds strings) */
+mcp_content_array_t* mcp_content_array_create(void);
+void mcp_content_array_free(mcp_content_array_t* array);
+
+/* Add content items - functions take ownership of provided sds strings. */
+int mcp_content_add_text(mcp_content_array_t* array, sds text);
+int mcp_content_add_textf(mcp_content_array_t* array, const char* fmt, ...);
+int mcp_content_add_image(mcp_content_array_t* array, sds data, sds mime_type);
 
 typedef struct {
     const char* name;
@@ -68,11 +103,8 @@ typedef int (*mcp_prompt_handler_t)(
 mcp_server_t* mcp_server_create(void);
 
 void mcp_server_destroy(mcp_server_t* server);
-
 int mcp_server_set_name(mcp_server_t* server, const char* name);
-
 int mcp_server_set_version(mcp_server_t* server, const char* version);
-
 void mcp_server_register_tool(mcp_server_t* server, const mcp_tool_t* tool);
 
 int mcp_server_register_prompt(
