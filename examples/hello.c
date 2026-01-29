@@ -7,6 +7,7 @@ static mcp_input_schema_t schema[] = {
     { .name = "a",
       .type = MCP_INPUT_SCHEMA_TYPE_NUMBER,
     },
+    mcp_input_schema_null
 };
 
 static int add_handler(const char* json_args, char** json_result, void* user_data) {
