@@ -4,13 +4,6 @@
 #include "libmcp.h"
 #include "cJSON.h"
 
-static mcp_input_schema_t schema[] = {
-    { .name = "a",
-      .type = MCP_INPUT_SCHEMA_TYPE_NUMBER,
-    },
-    mcp_input_schema_null
-};
-
 static cJSON* add_handler(cJSON* params) {
     cJSON* a = cJSON_GetObjectItem(params, "a");
     cJSON* b = cJSON_GetObjectItem(params, "b");
@@ -31,6 +24,46 @@ static cJSON* multiply_handler(cJSON* params) {
     return result;
 }
 
+static mcp_input_schema_t tool_add_schema[] = {
+    { .name = "a",
+      .type = MCP_INPUT_SCHEMA_TYPE_NUMBER,
+    },
+    { .name = "b",
+      .type = MCP_INPUT_SCHEMA_TYPE_NUMBER,
+    },
+    mcp_input_schema_null
+};
+
+static mcp_tool_t tool_add = {
+    .name = "add",
+    .description = "Add two numbers",
+    .handler = add_handler,
+    .input_schema = {
+        .type = MCP_INPUT_SCHEMA_TYPE_OBJECT,
+        .properties = tool_add_schema,
+    },
+};
+
+static mcp_input_schema_t tool_multiply_schema[] = {
+    { .name = "a",
+      .type = MCP_INPUT_SCHEMA_TYPE_NUMBER,
+    },
+    { .name = "b",
+      .type = MCP_INPUT_SCHEMA_TYPE_NUMBER,
+    },
+    mcp_input_schema_null
+};
+
+static mcp_tool_t tool_multiply = {
+    .name = "multiply",
+    .description = "Multiply two numbers",
+    .handler = multiply_handler,
+    .input_schema = {
+        .type = MCP_INPUT_SCHEMA_TYPE_OBJECT,
+        .properties = tool_multiply_schema,
+    },
+};
+
 static int prompt_handler(const char* json_args, char** prompt_text, void* user_data) {
     (void)user_data;
     (void)json_args;
@@ -49,11 +82,8 @@ int main(void) {
     mcp_server_set_name(server, "example-calculator");
     mcp_server_set_version(server, "1.0.0");
 
-    mcp_tool_t add_tool = {"add", "Add two numbers", add_handler, {0}};
-    mcp_tool_t multiply_tool = {"multiply", "Multiply two numbers", multiply_handler, {0}};
-
-    mcp_server_register_tool(server, &add_tool);
-    mcp_server_register_tool(server, &multiply_tool);
+    mcp_server_register_tool(server, &tool_add);
+    mcp_server_register_tool(server, &tool_multiply);
 
     mcp_prompt_t sample_prompt = {"sample", "A sample prompt template"};
     mcp_server_register_prompt(server, &sample_prompt, prompt_handler, NULL);
