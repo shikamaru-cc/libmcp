@@ -201,6 +201,65 @@ static cJSON* handle_initialize(mcp_server_t* server, cJSON* params) {
     return response;
 }
 
+static const char* schema_type_to_string(mcp_input_schema_type_e t) {
+    switch (t) {
+        case MCP_INPUT_SCHEMA_TYPE_NUMBER: return "number";
+        case MCP_INPUT_SCHEMA_TYPE_STRING: return "string";
+        case MCP_INPUT_SCHEMA_TYPE_BOOL:   return "boolean";
+        case MCP_INPUT_SCHEMA_TYPE_ARRAY:  return "array";
+        case MCP_INPUT_SCHEMA_TYPE_OBJECT: return "object";
+        case MCP_INPUT_SCHEMA_TYPE_NULL:   return "null";
+        default: return "unknown";
+    }
+}
+
+/* Convert internal mcp_input_schema_t to a cJSON object representing the schema.
+   Returns a new cJSON object or NULL if schema is null/empty. */
+static cJSON* mcp_input_schema_to_json(const mcp_input_schema_t* s) {
+    if (!s) return NULL;
+    if (s->type == MCP_INPUT_SCHEMA_TYPE_NULL) return NULL;
+
+    cJSON* obj = cJSON_CreateObject();
+    cJSON_AddStringToObject(obj, "type", schema_type_to_string(s->type));
+
+    if (s->description) {
+        cJSON_AddStringToObject(obj, "description", s->description);
+    }
+
+    if (s->type == MCP_INPUT_SCHEMA_TYPE_OBJECT) {
+        cJSON* props = cJSON_CreateObject();
+        const mcp_input_schema_t* p = s->properties;
+        while (p && p->type != MCP_INPUT_SCHEMA_TYPE_NULL) {
+            cJSON* prop_schema = mcp_input_schema_to_json(p);
+            if (p->name && prop_schema) {
+                cJSON_AddItemToObject(props, p->name, prop_schema);
+            }
+            p++;
+        }
+        cJSON_AddItemToObject(obj, "properties", props);
+
+        cJSON* req = cJSON_CreateArray();
+        const char** r = s->required;
+        while (r && *r) {
+            cJSON_AddItemToArray(req, cJSON_CreateString(*r));
+            r++;
+        }
+        cJSON_AddItemToObject(obj, "required", req);
+
+    } else if (s->type == MCP_INPUT_SCHEMA_TYPE_ARRAY) {
+        cJSON* items = NULL;
+        if (s->properties && s->properties->type != MCP_INPUT_SCHEMA_TYPE_NULL) {
+            items = mcp_input_schema_to_json(s->properties);
+        } else {
+            items = cJSON_CreateObject();
+            cJSON_AddStringToObject(items, "type", schema_type_to_string(s->type_arr));
+        }
+        if (items) cJSON_AddItemToObject(obj, "items", items);
+    }
+
+    return obj;
+}
+
 static cJSON* handle_tools_list(mcp_server_t* server, cJSON* params) {
     (void)params;
     cJSON* tools = cJSON_CreateArray();
@@ -210,6 +269,12 @@ static cJSON* handle_tools_list(mcp_server_t* server, cJSON* params) {
         cJSON_AddStringToObject(tool, "name", server->tools[i].name);
         cJSON_AddStringToObject(tool, "description",
             server->tools[i].description ? server->tools[i].description : "");
+
+        cJSON* schema_json = mcp_input_schema_to_json(&server->tools[i].input_schema);
+        if (schema_json) {
+            cJSON_AddItemToObject(tool, "inputSchema", schema_json);
+        }
+
         cJSON_AddItemToArray(tools, tool);
     }
 
