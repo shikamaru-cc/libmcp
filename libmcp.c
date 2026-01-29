@@ -284,20 +284,31 @@ static cJSON* handle_tools_list(mcp_server_t* server, cJSON* params) {
 }
 
 static cJSON* handle_tools_call(mcp_server_t* server, cJSON* params) {
-    cJSON* name_obj = cJSON_GetObjectItem(params, "name");
-    cJSON* args_obj = cJSON_GetObjectItem(params, "arguments");
+    cJSON* name = cJSON_GetObjectItem(params, "name");
+    cJSON* args = cJSON_GetObjectItem(params, "arguments");
 
-    if (!name_obj || !cJSON_IsString(name_obj)) {
+    if (!name || !cJSON_IsString(name)) {
         return NULL;
     }
 
-    const char* name = name_obj->valuestring;
-
     for (int i = 0; i < server->tool_count; i++) {
-        if (strcmp(server->tools[i].name, name) == 0) {
-            /* call tool handler that accepts cJSON* and returns cJSON* */
-            cJSON* res = server->tools[i].handler(args_obj);
-            return res; /* caller will integrate/responsibly free via cJSON_Delete */
+        if (strcmp(server->tools[i].name, name->valuestring) == 0) {
+            char* text = server->tools[i].handler(args);
+            if (text == NULL)
+                return NULL;
+
+            cJSON* result = cJSON_CreateObject();
+
+            cJSON* content = cJSON_CreateArray();
+            cJSON_AddItemToObject(result, "content", content);
+
+            cJSON* content_obj = cJSON_CreateObject();
+            cJSON_AddStringToObject(content_obj, "type", "text");
+            cJSON_AddStringToObject(content_obj, "text", text);
+            cJSON_AddItemToArray(content, content_obj);
+
+            free(text);
+            return result;
         }
     }
 

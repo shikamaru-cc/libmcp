@@ -45,7 +45,7 @@ typedef struct mcp_input_schema {
 
 #define mcp_input_schema_null { .type = MCP_INPUT_SCHEMA_TYPE_NULL }
 
-typedef cJSON* (*mcp_tool_handler_t)(cJSON* params);
+typedef char* (*mcp_tool_handler_t)(cJSON* params);
 
 typedef struct {
     const char* name;
