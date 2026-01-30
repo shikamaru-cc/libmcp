@@ -104,6 +104,8 @@ int mcp_server_serve_stdio(mcp_server_t* server);
 
 const char* mcp_error_string(int code);
 
+cJSON *cJSON_Select(cJSON *o, const char *fmt, ...);
+
 #ifdef __cplusplus
 }
 #endif
