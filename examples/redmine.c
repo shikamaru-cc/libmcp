@@ -122,7 +122,7 @@ static int list_projects_handler(cJSON* params, mcp_content_array_t* contents) {
         return mcp_content_add_text(contents, sdsnew("Error: Failed to fetch projects from Redmine"));
     }
 
-    cJSON* projects = cJSON_GetObjectItem(json, "projects");
+    cJSON* projects = cJSON_Select(json, ".projects");
     if (!projects || !cJSON_IsArray(projects)) {
         cJSON_Delete(json);
         redmine_context_destroy(ctx);
@@ -134,15 +134,15 @@ static int list_projects_handler(cJSON* params, mcp_content_array_t* contents) {
 
     cJSON* project = NULL;
     cJSON_ArrayForEach(project, projects) {
-        cJSON* id = cJSON_GetObjectItem(project, "id");
-        cJSON* name = cJSON_GetObjectItem(project, "name");
-        cJSON* identifier = cJSON_GetObjectItem(project, "identifier");
-        cJSON* description = cJSON_GetObjectItem(project, "description");
+        cJSON* id = cJSON_Select(project, ".id:n");
+        cJSON* name = cJSON_Select(project, ".name:s");
+        cJSON* identifier = cJSON_Select(project, ".identifier:s");
+        cJSON* description = cJSON_Select(project, ".description:s");
 
-        result = sdscatprintf(result, "\n  ID: %d\n", cJSON_IsNumber(id) ? id->valueint : 0);
-        result = sdscatprintf(result, "  Name: %s\n", cJSON_IsString(name) ? name->valuestring : "N/A");
-        result = sdscatprintf(result, "  Identifier: %s\n", cJSON_IsString(identifier) ? identifier->valuestring : "N/A");
-        if (description && cJSON_IsString(description) && strlen(description->valuestring) > 0) {
+        result = sdscatprintf(result, "\n  ID: %d\n", id ? id->valueint : 0);
+        result = sdscatprintf(result, "  Name: %s\n", name ? name->valuestring : "N/A");
+        result = sdscatprintf(result, "  Identifier: %s\n", identifier ? identifier->valuestring : "N/A");
+        if (description && strlen(description->valuestring) > 0) {
             result = sdscatprintf(result, "  Description: %s\n", description->valuestring);
         }
     }
@@ -196,7 +196,7 @@ static int list_activities_handler(cJSON* params, mcp_content_array_t* contents)
         return mcp_content_add_text(contents, sdsnew("Error: Failed to fetch issues from Redmine"));
     }
 
-    cJSON* issues = cJSON_GetObjectItem(issues_json, "issues");
+    cJSON* issues = cJSON_Select(issues_json, ".issues");
     if (!issues || !cJSON_IsArray(issues)) {
         cJSON_Delete(issues_json);
         redmine_context_destroy(ctx);
@@ -209,9 +209,9 @@ static int list_activities_handler(cJSON* params, mcp_content_array_t* contents)
 
     cJSON* issue = NULL;
     cJSON_ArrayForEach(issue, issues) {
-        cJSON* id = cJSON_GetObjectItem(issue, "id");
-        cJSON* subject = cJSON_GetObjectItem(issue, "subject");
-        int issue_id = cJSON_IsNumber(id) ? id->valueint : 0;
+        cJSON* id = cJSON_Select(issue, ".id:n");
+        cJSON* subject = cJSON_Select(issue, ".subject:s");
+        int issue_id = id ? id->valueint : 0;
 
         char detail_path[256];
         snprintf(detail_path, sizeof(detail_path), "issues/%d.json?include=journals", issue_id);
@@ -221,19 +221,15 @@ static int list_activities_handler(cJSON* params, mcp_content_array_t* contents)
             continue;
         }
 
-        cJSON* full_issue = cJSON_GetObjectItem(detail_json, "issue");
-        cJSON* journals = cJSON_GetObjectItem(full_issue, "journals");
+        cJSON* journals = cJSON_Select(detail_json, ".issue.journals:a");
 
-        if (journals && cJSON_IsArray(journals)) {
+        if (journals) {
             cJSON* journal = NULL;
             cJSON_ArrayForEach(journal, journals) {
-                cJSON* journal_user = cJSON_GetObjectItem(journal, "user");
-                cJSON* journal_user_id = cJSON_GetObjectItem(journal_user, "id");
-                cJSON* created_on = cJSON_GetObjectItem(journal, "created_on");
+                cJSON* journal_user_id = cJSON_Select(journal, ".user.id:n");
+                cJSON* created_on = cJSON_Select(journal, ".created_on:s");
 
-                if (journal_user_id && cJSON_IsNumber(journal_user_id) &&
-                    journal_user_id->valueint == user_id &&
-                    created_on && cJSON_IsString(created_on)) {
+                if (journal_user_id && journal_user_id->valueint == user_id && created_on) {
 
                     char journal_date[11];
                     strncpy(journal_date, created_on->valuestring, 10);
@@ -246,7 +242,7 @@ static int list_activities_handler(cJSON* params, mcp_content_array_t* contents)
                         }
 
                         activities[activity_count] = cJSON_Duplicate(journal, 1);
-                        cJSON* subject_copy = cJSON_CreateString(cJSON_IsString(subject) ? subject->valuestring : "N/A");
+                        cJSON* subject_copy = cJSON_CreateString(subject ? subject->valuestring : "N/A");
                         cJSON_AddItemToObject(activities[activity_count], "issue_id", cJSON_CreateNumber(issue_id));
                         cJSON_AddItemToObject(activities[activity_count], "subject", subject_copy);
                         activity_count++;
@@ -280,27 +276,27 @@ static int list_activities_handler(cJSON* params, mcp_content_array_t* contents)
     }
 
     for (int i = 0; i < activity_count; i++) {
-        cJSON* created_on = cJSON_GetObjectItem(activities[i], "created_on");
+        cJSON* created_on = cJSON_Select(activities[i], ".created_on:s");
         char date[11];
         strncpy(date, created_on->valuestring, 10);
         date[10] = '\0';
 
-        int issue_id = cJSON_GetObjectItem(activities[i], "issue_id")->valueint;
+        int issue_id = cJSON_Select(activities[i], ".issue_id:n")->valueint;
         char* time_str = &created_on->valuestring[11];
         time_str[8] = '\0';
 
-        cJSON* details = cJSON_GetObjectItem(activities[i], "details");
-        if (details && cJSON_IsArray(details)) {
+        cJSON* details = cJSON_Select(activities[i], ".details:a");
+        if (details) {
             cJSON* detail = NULL;
             cJSON_ArrayForEach(detail, details) {
-                cJSON* name = cJSON_GetObjectItem(detail, "name");
+                cJSON* name = cJSON_Select(detail, ".name:s");
                 result = sdscatprintf(result, "%s: %s (%d) modified %s\n", date, time_str, issue_id,
-                                     cJSON_IsString(name) ? name->valuestring : "unknown");
+                                     name ? name->valuestring : "unknown");
             }
         }
 
-        cJSON* notes = cJSON_GetObjectItem(activities[i], "notes");
-        if (notes && cJSON_IsString(notes) && strlen(notes->valuestring) > 0) {
+        cJSON* notes = cJSON_Select(activities[i], ".notes:s");
+        if (notes && strlen(notes->valuestring) > 0) {
             sds short_notes = sdsempty();
             if (strlen(notes->valuestring) > 30) {
                 short_notes = sdscatlen(short_notes, notes->valuestring, 30);
