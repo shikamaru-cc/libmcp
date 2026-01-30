@@ -21,124 +21,71 @@ static size_t write_callback(void* contents, size_t size, size_t nmemb, void* us
     return realsize;
 }
 
-typedef struct RedmineContext {
+static struct {
     char* base_url;
     char* api_key;
-    CURL* curl;
-    struct curl_slist* headers;
-} RedmineContext;
+    int user_id;
+} redmine_config;
 
-static RedmineContext* RedmineContext_create(void)
+static cJSON* redmine_get(const char* path)
 {
-    const char* base_url = getenv("REDMINE_URL");
-    const char* api_key = getenv("REDMINE_API_KEY");
+    CURL* curl = NULL;
+    struct curl_slist* headers = NULL;
+    char* response = NULL;
 
-    if (!base_url) {
-        base_url = "http://localhost:3000";
-    }
-
-    if (!api_key) {
-        return NULL;
-    }
-
-    RedmineContext* ctx = calloc(1, sizeof(RedmineContext));
-    if (!ctx) {
-        return NULL;
-    }
-
-    ctx->base_url = strdup(base_url);
-    ctx->api_key = strdup(api_key);
-
-    if (!ctx->base_url || !ctx->api_key) {
-        free(ctx->base_url);
-        free(ctx->api_key);
-        free(ctx);
-        return NULL;
-    }
-
-    ctx->curl = curl_easy_init();
-    if (!ctx->curl) {
-        free(ctx->base_url);
-        free(ctx->api_key);
-        free(ctx);
-        return NULL;
-    }
+    while (path && *path == '/') path++;
+    char url[512];
+    snprintf(url, sizeof(url), "%s/%s", redmine_config.base_url, path);
 
     char auth_header[256];
-    snprintf(auth_header, sizeof(auth_header), "X-Redmine-API-Key: %s", ctx->api_key);
-    ctx->headers = curl_slist_append(NULL, auth_header);
+    snprintf(auth_header, sizeof(auth_header), "X-Redmine-API-Key: %s", redmine_config.api_key);
 
-    curl_easy_setopt(ctx->curl, CURLOPT_WRITEFUNCTION, write_callback);
-    curl_easy_setopt(ctx->curl, CURLOPT_HTTPHEADER, ctx->headers);
+    curl = curl_easy_init();
+    if (curl == NULL)
+        goto fail;
 
-    return ctx;
-}
+    headers = curl_slist_append(NULL, auth_header);
+    if (headers == NULL)
+        goto fail;
 
-static void RedmineContext_destroy(RedmineContext* ctx)
-{
-    if (!ctx) {
-        return;
-    }
+    response = strdup("");
+    if (response == NULL)
+        goto fail;
 
-    free(ctx->base_url);
-    free(ctx->api_key);
+    curl_easy_setopt(curl, CURLOPT_URL, url);
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
 
-    if (ctx->curl) {
-        curl_easy_cleanup(ctx->curl);
-    }
-
-    if (ctx->headers) {
-        curl_slist_free_all(ctx->headers);
-    }
-
-    free(ctx);
-}
-
-static cJSON* RedmineHttpGet(RedmineContext* ctx, const char* path)
-{
-    char url[512];
-    if (path[0] == '/') {
-        snprintf(url, sizeof(url), "%s%s", ctx->base_url, path);
-    } else {
-        snprintf(url, sizeof(url), "%s/%s", ctx->base_url, path);
-    }
-
-    char* response = strdup("");
-    curl_easy_setopt(ctx->curl, CURLOPT_URL, url);
-    curl_easy_setopt(ctx->curl, CURLOPT_WRITEDATA, &response);
-
-    CURLcode res = curl_easy_perform(ctx->curl);
-
-    if (res != CURLE_OK) {
-        free(response);
-        return NULL;
-    }
+    CURLcode res = curl_easy_perform(curl);
+    if (res != CURLE_OK)
+        goto fail;
 
     cJSON* json = cJSON_Parse(response);
+    curl_easy_cleanup(curl);
+    curl_slist_free_all(headers);
     free(response);
-
     return json;
+
+fail:
+    if (curl) curl_easy_cleanup(curl);
+    if (headers) curl_slist_free_all(headers);
+    if (response) free(response);
+    return NULL;
 }
 
 static int list_projects_handler(cJSON* params, McpContentArray* contents)
 {
     (void)params;
 
-    RedmineContext* ctx = RedmineContext_create();
-    if (!ctx) {
-        return mcp_content_add_text(contents, "Error: Failed to initialize Redmine context (check REDMINE_API_KEY)");
-    }
-
-    cJSON* json = RedmineHttpGet(ctx, "projects.json");
+    cJSON* json = redmine_get("projects.json");
     if (!json) {
-        RedmineContext_destroy(ctx);
         return mcp_content_add_text(contents, "Error: Failed to fetch projects from Redmine");
     }
 
     cJSON* projects = cJSON_Select(json, ".projects");
     if (!projects || !cJSON_IsArray(projects)) {
         cJSON_Delete(json);
-        RedmineContext_destroy(ctx);
         return mcp_content_add_text(contents, "Error: No projects found in response");
     }
 
@@ -160,7 +107,6 @@ static int list_projects_handler(cJSON* params, McpContentArray* contents)
     }
 
     cJSON_Delete(json);
-    RedmineContext_destroy(ctx);
 
     return MCP_ERROR_NONE;
 }
@@ -203,32 +149,25 @@ static int list_activities_handler(cJSON* params, McpContentArray* contents)
 
     /* issue request */
 
-    RedmineContext* ctx = RedmineContext_create();
-    if (!ctx) {
-        return mcp_content_add_text(contents, "Error: Failed to initialize Redmine context (check REDMINE_API_KEY)");
-    }
-
     char updated_on[128];
     char* start_date = updated_on+2;
     sprintf(updated_on, ">=");
     strftime(start_date, sizeof(updated_on)-2, "%Y-%m-%d", &start_date_tm);
-    char* updated_on_escape = curl_easy_escape(ctx->curl, updated_on, 0);
+    char* updated_on_escape = curl_easy_escape(NULL, updated_on, 0);
 
     char issues_path[256];
     snprintf(issues_path, sizeof(issues_path), "issues.json?assigned_to_id=%d&updated_on=%s&status_id=*&sort=updated_on:desc", user_id, updated_on_escape);
 
     curl_free(updated_on_escape);
 
-    cJSON* issues_json = RedmineHttpGet(ctx, issues_path);
+    cJSON* issues_json = redmine_get(issues_path);
     if (!issues_json) {
-        RedmineContext_destroy(ctx);
         return mcp_content_add_text(contents, "Error: Failed to fetch issues from Redmine");
     }
 
     cJSON* issues = cJSON_Select(issues_json, ".issues:a");
     if (!issues) {
         cJSON_Delete(issues_json);
-        RedmineContext_destroy(ctx);
         return mcp_content_add_text(contents, "Error: No issues found in response");
     }
 
@@ -251,7 +190,7 @@ static int list_activities_handler(cJSON* params, McpContentArray* contents)
         char detail_path[256];
         snprintf(detail_path, sizeof(detail_path), "issues/%d.json?include=journals", issue_id);
 
-        cJSON* detail_json = RedmineHttpGet(ctx, detail_path);
+        cJSON* detail_json = redmine_get(detail_path);
         if (!detail_json) {
             continue;
         }
@@ -281,7 +220,6 @@ static int list_activities_handler(cJSON* params, McpContentArray* contents)
     }
 
     cJSON_Delete(issues_json);
-    RedmineContext_destroy(ctx);
 
     if (stb_arr_len(activities) == 0) {
         return mcp_content_add_text(contents, "No activities found in the specified period");
@@ -373,15 +311,12 @@ static mcp_tool_t tool_list_projects = {
 
 int main(void)
 {
+    redmine_config.base_url = getenv("REDMINE_URL");
+    redmine_config.api_key = getenv("REDMINE_API_KEY");
+
     curl_global_init(CURL_GLOBAL_DEFAULT);
 
     McpServer* server = mcp_server_create();
-    if (!server) {
-        fprintf(stderr, "Failed to create server\n");
-        curl_global_cleanup();
-        return 1;
-    }
-
     mcp_server_set_name(server, "redmine-mcp");
     mcp_server_set_version(server, "1.0.0");
 
@@ -389,7 +324,6 @@ int main(void)
     mcp_server_register_tool(server, &tool_list_activities);
 
     fprintf(stderr, "Redmine MCP Server running...\n");
-    fprintf(stderr, "Set REDMINE_URL and REDMINE_API_KEY environment variables\n");
 
     int result = mcp_server_serve_stdio(server);
 
