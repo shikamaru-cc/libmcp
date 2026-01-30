@@ -1,6 +1,8 @@
+#define _XOPEN_SOURCE 700
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <curl/curl.h>
 #include "libmcp.h"
 #include "cJSON.h"
@@ -168,27 +170,40 @@ static int list_activities_handler(cJSON* params, mcp_content_array_t* contents)
         user_id = atoi(user_id_str);
     }
 
-    cJSON* days_json = cJSON_GetObjectItem(params, "days");
-    int days = days_json && cJSON_IsNumber(days_json) ? days_json->valueint : 14;
-
     if (user_id == -1) {
         return mcp_content_add_text(contents, sdsnew("Error: user_id parameter or REDMINE_USER_ID environment variable not set"));
     }
 
-    char cutoff_date[11];
-    time_t now = time(NULL);
-    struct tm* tm_now = gmtime(&now);
-    tm_now->tm_mday -= days;
-    mktime(tm_now);
-    strftime(cutoff_date, sizeof(cutoff_date), "%Y-%m-%d", tm_now);
+    /* prepare start date */
+
+    static const char* const fmt = "%Y-%m-%d";
+    struct tm start_date_tm;
+    cJSON* start_date_param = cJSON_Select(params, "start_date:s");
+    if (!start_date_param || strptime(start_date_param->valuestring, fmt, &start_date_tm) == NULL) {
+        /* default to 2 weeks ago */
+        time_t now = time(NULL);
+        gmtime_r(&now, &start_date_tm);
+        start_date_tm.tm_mday -= 14;
+        mktime(&start_date_tm);
+    }
+
+    /* issue request */
 
     redmine_context_t* ctx = redmine_context_create();
     if (!ctx) {
         return mcp_content_add_text(contents, sdsnew("Error: Failed to initialize Redmine context (check REDMINE_API_KEY)"));
     }
 
+    char updated_on[128];
+    char* start_date = updated_on+2;
+    sprintf(updated_on, ">=");
+    strftime(start_date, sizeof(updated_on)-2, "%Y-%m-%d", &start_date_tm);
+    char* updated_on_escape = curl_easy_escape(ctx->curl, updated_on, 0);
+
     char issues_path[256];
-    snprintf(issues_path, sizeof(issues_path), "issues.json?assigned_to_id=%d&status_id=*&sort=updated_on:desc&limit=10", user_id);
+    snprintf(issues_path, sizeof(issues_path), "issues.json?assigned_to_id=%d&updated_on=%s&status_id=*&sort=updated_on:desc", user_id, updated_on_escape);
+
+    curl_free(updated_on_escape);
 
     cJSON* issues_json = redmine_http_get(ctx, issues_path);
     if (!issues_json) {
@@ -196,8 +211,8 @@ static int list_activities_handler(cJSON* params, mcp_content_array_t* contents)
         return mcp_content_add_text(contents, sdsnew("Error: Failed to fetch issues from Redmine"));
     }
 
-    cJSON* issues = cJSON_Select(issues_json, ".issues");
-    if (!issues || !cJSON_IsArray(issues)) {
+    cJSON* issues = cJSON_Select(issues_json, ".issues:a");
+    if (!issues) {
         cJSON_Delete(issues_json);
         redmine_context_destroy(ctx);
         return mcp_content_add_text(contents, sdsnew("Error: No issues found in response"));
@@ -210,8 +225,16 @@ static int list_activities_handler(cJSON* params, mcp_content_array_t* contents)
     cJSON* issue = NULL;
     cJSON_ArrayForEach(issue, issues) {
         cJSON* id = cJSON_Select(issue, ".id:n");
+        if (!id) {
+            continue;
+        }
+
         cJSON* subject = cJSON_Select(issue, ".subject:s");
-        int issue_id = id ? id->valueint : 0;
+        if (!subject) {
+            continue;
+        }
+
+        int issue_id = id->valueint;
 
         char detail_path[256];
         snprintf(detail_path, sizeof(detail_path), "issues/%d.json?include=journals", issue_id);
@@ -229,13 +252,12 @@ static int list_activities_handler(cJSON* params, mcp_content_array_t* contents)
                 cJSON* journal_user_id = cJSON_Select(journal, ".user.id:n");
                 cJSON* created_on = cJSON_Select(journal, ".created_on:s");
 
+                /* journal created by target user and happened after start_date */
                 if (journal_user_id && journal_user_id->valueint == user_id && created_on) {
-
                     char journal_date[11];
                     strncpy(journal_date, created_on->valuestring, 10);
                     journal_date[10] = '\0';
-
-                    if (strcmp(journal_date, cutoff_date) >= 0) {
+                    if (strcmp(journal_date, start_date) >= 0) {
                         if (activity_count >= activity_capacity) {
                             activity_capacity = activity_capacity == 0 ? 16 : activity_capacity * 2;
                             activities = realloc(activities, sizeof(cJSON*) * activity_capacity);
@@ -330,9 +352,9 @@ static mcp_input_schema_t tool_list_activities_schema[] = {
         .type = MCP_INPUT_SCHEMA_TYPE_NUMBER,
     },
     {
-        .name = "days",
-        .description = "Number of days to look back (default: 14)",
-        .type = MCP_INPUT_SCHEMA_TYPE_NUMBER,
+        .name = "start_date",
+        .description = "The start date of user's activities to fetch, should be with format %Y-%m-%d. If empty, setup to 2 weeks ago",
+        .type = MCP_INPUT_SCHEMA_TYPE_STRING,
     },
     mcp_input_schema_null
 };
