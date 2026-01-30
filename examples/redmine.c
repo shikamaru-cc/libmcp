@@ -6,6 +6,7 @@
 #include <curl/curl.h>
 #include "libmcp.h"
 #include "cJSON.h"
+#include "stb.h"
 
 static size_t write_callback(void* contents, size_t size, size_t nmemb, void* userp) {
     size_t realsize = size * nmemb;
@@ -161,6 +162,14 @@ static int list_projects_handler(cJSON* params, mcp_content_array_t* contents) {
     return MCP_ERROR_NONE;
 }
 
+static int activity_compare_by_created_on(const void* a, const void* b) {
+    const cJSON* act_a = *(const cJSON**)a;
+    const cJSON* act_b = *(const cJSON**)b;
+    cJSON* time_a = cJSON_GetObjectItem(act_a, "created_on");
+    cJSON* time_b = cJSON_GetObjectItem(act_b, "created_on");
+    return strcmp(time_a->valuestring, time_b->valuestring);
+}
+
 static int list_activities_handler(cJSON* params, mcp_content_array_t* contents) {
     const char* user_id_str = getenv("REDMINE_USER_ID");
 
@@ -219,8 +228,6 @@ static int list_activities_handler(cJSON* params, mcp_content_array_t* contents)
     }
 
     cJSON** activities = NULL;
-    int activity_count = 0;
-    int activity_capacity = 0;
 
     cJSON* issue = NULL;
     cJSON_ArrayForEach(issue, issues) {
@@ -244,31 +251,23 @@ static int list_activities_handler(cJSON* params, mcp_content_array_t* contents)
             continue;
         }
 
+        cJSON* journal = NULL;
         cJSON* journals = cJSON_Select(detail_json, ".issue.journals:a");
+        cJSON_ArrayForEach(journal, journals) {
+            cJSON* journal_user_id = cJSON_Select(journal, ".user.id:n");
+            cJSON* created_on = cJSON_Select(journal, ".created_on:s");
 
-        if (journals) {
-            cJSON* journal = NULL;
-            cJSON_ArrayForEach(journal, journals) {
-                cJSON* journal_user_id = cJSON_Select(journal, ".user.id:n");
-                cJSON* created_on = cJSON_Select(journal, ".created_on:s");
-
-                /* journal created by target user and happened after start_date */
-                if (journal_user_id && journal_user_id->valueint == user_id && created_on) {
-                    char journal_date[11];
-                    strncpy(journal_date, created_on->valuestring, 10);
-                    journal_date[10] = '\0';
-                    if (strcmp(journal_date, start_date) >= 0) {
-                        if (activity_count >= activity_capacity) {
-                            activity_capacity = activity_capacity == 0 ? 16 : activity_capacity * 2;
-                            activities = realloc(activities, sizeof(cJSON*) * activity_capacity);
-                        }
-
-                        activities[activity_count] = cJSON_Duplicate(journal, 1);
-                        cJSON* subject_copy = cJSON_CreateString(subject ? subject->valuestring : "N/A");
-                        cJSON_AddItemToObject(activities[activity_count], "issue_id", cJSON_CreateNumber(issue_id));
-                        cJSON_AddItemToObject(activities[activity_count], "subject", subject_copy);
-                        activity_count++;
-                    }
+            /* journal created by target user and happened after start_date */
+            if (journal_user_id && journal_user_id->valueint == user_id && created_on) {
+                char journal_date[11];
+                strncpy(journal_date, created_on->valuestring, 10);
+                journal_date[10] = '\0';
+                if (strcmp(journal_date, start_date) >= 0) {
+                    cJSON* new_activity = cJSON_Duplicate(journal, 1);
+                    cJSON* subject_copy = cJSON_CreateString(subject ? subject->valuestring : "N/A");
+                    cJSON_AddItemToObject(new_activity, "issue_id", cJSON_CreateNumber(issue_id));
+                    cJSON_AddItemToObject(new_activity, "subject", subject_copy);
+                    *stb_arr_add(activities) = new_activity;
                 }
             }
         }
@@ -279,25 +278,15 @@ static int list_activities_handler(cJSON* params, mcp_content_array_t* contents)
     cJSON_Delete(issues_json);
     redmine_context_destroy(ctx);
 
-    if (activity_count == 0) {
+    if (stb_arr_len(activities) == 0) {
         return mcp_content_add_text(contents, sdsnew("No activities found in the specified period"));
     }
 
     sds result = sdsempty();
 
-    for (int i = 0; i < activity_count - 1; i++) {
-        for (int j = i + 1; j < activity_count; j++) {
-            cJSON* time_i = cJSON_GetObjectItem(activities[i], "created_on");
-            cJSON* time_j = cJSON_GetObjectItem(activities[j], "created_on");
-            if (strcmp(time_i->valuestring, time_j->valuestring) < 0) {
-                cJSON* temp = activities[i];
-                activities[i] = activities[j];
-                activities[j] = temp;
-            }
-        }
-    }
+    qsort(activities, stb_arr_len(activities), sizeof(cJSON*), activity_compare_by_created_on);
 
-    for (int i = 0; i < activity_count; i++) {
+    for (int i = 0; i < stb_arr_len(activities); i++) {
         cJSON* created_on = cJSON_Select(activities[i], ".created_on:s");
         char date[11];
         strncpy(date, created_on->valuestring, 10);
@@ -331,10 +320,10 @@ static int list_activities_handler(cJSON* params, mcp_content_array_t* contents)
         }
     }
 
-    for (int i = 0; i < activity_count; i++) {
+    for (int i = 0; i < stb_arr_len(activities); i++) {
         cJSON_Delete(activities[i]);
     }
-    free(activities);
+    stb_arr_free(activities);
 
     int ret = mcp_content_add_text(contents, result);
     if (ret != 0) {
