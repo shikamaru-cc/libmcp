@@ -5,7 +5,6 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "cJSON.h"
-#include "sds.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -69,9 +68,9 @@ typedef enum {
 
 struct mcp_content_item {
     mcp_content_type_t type;
-    sds text;      /* owned */
-    sds data;      /* owned: image data (base64) or resource */
-    sds mime_type; /* owned */
+    char* text;      /* owned */
+    char* data;      /* owned: image data (base64) or resource */
+    char* mime_type; /* owned */
 };
 
 struct mcp_content_array {
@@ -80,14 +79,14 @@ struct mcp_content_array {
     int capacity;
 };
 
-/* Content array management (libmcp takes ownership of passed sds strings) */
+/* Content array management */
 mcp_content_array_t* mcp_content_array_create(void);
 void mcp_content_array_free(mcp_content_array_t* array);
 
-/* Add content items - functions take ownership of provided sds strings. */
-int mcp_content_add_text(mcp_content_array_t* array, sds text);
+/* Add content items - libmcp makes copies of provided strings. */
+int mcp_content_add_text(mcp_content_array_t* array, const char* text);
 int mcp_content_add_textf(mcp_content_array_t* array, const char* fmt, ...);
-int mcp_content_add_image(mcp_content_array_t* array, sds data, sds mime_type);
+int mcp_content_add_image(mcp_content_array_t* array, const char* data, const char* mime_type);
 
 
 /* Server lifecycle and registration */

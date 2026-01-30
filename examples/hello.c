@@ -22,7 +22,7 @@ static int multiply_handler(cJSON* params, mcp_content_array_t* contents) {
 
 static int weather_handler(cJSON* params, mcp_content_array_t* contents) {
     (void)params;
-    return mcp_content_add_text(contents, sdsnew("sunny day baby"));
+    return mcp_content_add_text(contents, "sunny day baby");
 }
 
 static mcp_input_schema_t tool_add_schema[] = {

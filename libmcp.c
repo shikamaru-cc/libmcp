@@ -1,6 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
+#define _GNU_SOURCE
 #include "libmcp.h"
-#include "sds.h"
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -439,9 +439,9 @@ mcp_content_array_t* mcp_content_array_create(void) {
 void mcp_content_array_free(mcp_content_array_t* array) {
     if (!array) return;
     for (int i = 0; i < array->count; i++) {
-        sdsfree(array->items[i].text);
-        sdsfree(array->items[i].data);
-        sdsfree(array->items[i].mime_type);
+        free(array->items[i].text);
+        free(array->items[i].data);
+        free(array->items[i].mime_type);
     }
     free(array->items);
     free(array);
@@ -457,18 +457,21 @@ static int mcp_content_array_ensure(mcp_content_array_t* array) {
     return MCP_ERROR_NONE;
 }
 
-int mcp_content_add_text(mcp_content_array_t* array, sds text) {
+int mcp_content_add_text(mcp_content_array_t* array, const char* text) {
     if (!array || !text) {
-        sdsfree(text);
         return MCP_ERROR_INVALID_ARGUMENT;
     }
     int err = mcp_content_array_ensure(array);
-    if (err != MCP_ERROR_NONE) { sdsfree(text); return err; }
+    if (err != MCP_ERROR_NONE) { return err; }
     mcp_content_item_t* it = &array->items[array->count++];
     it->type = MCP_CONTENT_TYPE_TEXT;
-    it->text = text;
+    it->text = strdup(text);
     it->data = NULL;
     it->mime_type = NULL;
+    if (!it->text) {
+        array->count--;
+        return MCP_ERROR_OUT_OF_MEMORY;
+    }
     return MCP_ERROR_NONE;
 }
 
@@ -476,26 +479,32 @@ int mcp_content_add_textf(mcp_content_array_t* array, const char* fmt, ...) {
     if (!array || !fmt) return MCP_ERROR_INVALID_ARGUMENT;
     va_list ap;
     va_start(ap, fmt);
-    sds s = sdsempty();
-    s = sdscatvprintf(s, fmt, ap);
+    char* s = NULL;
+    int len = vasprintf(&s, fmt, ap);
     va_end(ap);
-    if (!s) return MCP_ERROR_OUT_OF_MEMORY;
-    return mcp_content_add_text(array, s);
+    if (len < 0 || !s) return MCP_ERROR_OUT_OF_MEMORY;
+    int err = mcp_content_add_text(array, s);
+    free(s);
+    return err;
 }
 
-int mcp_content_add_image(mcp_content_array_t* array, sds data, sds mime_type) {
+int mcp_content_add_image(mcp_content_array_t* array, const char* data, const char* mime_type) {
     if (!array || !data || !mime_type) {
-        sdsfree(data);
-        sdsfree(mime_type);
         return MCP_ERROR_INVALID_ARGUMENT;
     }
     int err = mcp_content_array_ensure(array);
-    if (err != MCP_ERROR_NONE) { sdsfree(data); sdsfree(mime_type); return err; }
+    if (err != MCP_ERROR_NONE) { return err; }
     mcp_content_item_t* it = &array->items[array->count++];
     it->type = MCP_CONTENT_TYPE_IMAGE;
     it->text = NULL;
-    it->data = data;
-    it->mime_type = mime_type;
+    it->data = strdup(data);
+    it->mime_type = strdup(mime_type);
+    if (!it->data || !it->mime_type) {
+        free(it->data);
+        free(it->mime_type);
+        array->count--;
+        return MCP_ERROR_OUT_OF_MEMORY;
+    }
     return MCP_ERROR_NONE;
 }
 

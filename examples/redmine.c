@@ -10,8 +10,13 @@
 
 static size_t write_callback(void* contents, size_t size, size_t nmemb, void* userp) {
     size_t realsize = size * nmemb;
-    sds* s = (sds*)userp;
-    *s = sdscatlen(*s, contents, realsize);
+    char** s = (char**)userp;
+    size_t oldlen = *s ? strlen(*s) : 0;
+    char* new_s = realloc(*s, oldlen + realsize + 1);
+    if (!new_s) return 0;
+    *s = new_s;
+    memcpy(*s + oldlen, contents, realsize);
+    (*s)[oldlen + realsize] = '\0';
     return realsize;
 }
 
@@ -94,19 +99,19 @@ static cJSON* redmine_http_get(redmine_context_t* ctx, const char* path) {
         snprintf(url, sizeof(url), "%s/%s", ctx->base_url, path);
     }
 
-    sds response = sdsempty();
+    char* response = strdup("");
     curl_easy_setopt(ctx->curl, CURLOPT_URL, url);
     curl_easy_setopt(ctx->curl, CURLOPT_WRITEDATA, &response);
 
     CURLcode res = curl_easy_perform(ctx->curl);
 
     if (res != CURLE_OK) {
-        sdsfree(response);
+        free(response);
         return NULL;
     }
 
     cJSON* json = cJSON_Parse(response);
-    sdsfree(response);
+    free(response);
 
     return json;
 }
@@ -116,24 +121,23 @@ static int list_projects_handler(cJSON* params, mcp_content_array_t* contents) {
 
     redmine_context_t* ctx = redmine_context_create();
     if (!ctx) {
-        return mcp_content_add_text(contents, sdsnew("Error: Failed to initialize Redmine context (check REDMINE_API_KEY)"));
+        return mcp_content_add_text(contents, "Error: Failed to initialize Redmine context (check REDMINE_API_KEY)");
     }
 
     cJSON* json = redmine_http_get(ctx, "projects.json");
     if (!json) {
         redmine_context_destroy(ctx);
-        return mcp_content_add_text(contents, sdsnew("Error: Failed to fetch projects from Redmine"));
+        return mcp_content_add_text(contents, "Error: Failed to fetch projects from Redmine");
     }
 
     cJSON* projects = cJSON_Select(json, ".projects");
     if (!projects || !cJSON_IsArray(projects)) {
         cJSON_Delete(json);
         redmine_context_destroy(ctx);
-        return mcp_content_add_text(contents, sdsnew("Error: No projects found in response"));
+        return mcp_content_add_text(contents, "Error: No projects found in response");
     }
 
-    sds result = sdsempty();
-    result = sdscat(result, "Projects:\n");
+    mcp_content_add_text(contents, "Projects:\n");
 
     cJSON* project = NULL;
     cJSON_ArrayForEach(project, projects) {
@@ -142,22 +146,16 @@ static int list_projects_handler(cJSON* params, mcp_content_array_t* contents) {
         cJSON* identifier = cJSON_Select(project, ".identifier:s");
         cJSON* description = cJSON_Select(project, ".description:s");
 
-        result = sdscatprintf(result, "\n  ID: %d\n", id ? id->valueint : 0);
-        result = sdscatprintf(result, "  Name: %s\n", name ? name->valuestring : "N/A");
-        result = sdscatprintf(result, "  Identifier: %s\n", identifier ? identifier->valuestring : "N/A");
+        mcp_content_add_textf(contents, "\n  ID: %d\n", id ? id->valueint : 0);
+        mcp_content_add_textf(contents, "  Name: %s\n", name ? name->valuestring : "N/A");
+        mcp_content_add_textf(contents, "  Identifier: %s\n", identifier ? identifier->valuestring : "N/A");
         if (description && strlen(description->valuestring) > 0) {
-            result = sdscatprintf(result, "  Description: %s\n", description->valuestring);
+            mcp_content_add_textf(contents, "  Description: %s\n", description->valuestring);
         }
     }
 
     cJSON_Delete(json);
     redmine_context_destroy(ctx);
-
-    int ret = mcp_content_add_text(contents, result);
-    if (ret != 0) {
-        sdsfree(result);
-        return ret;
-    }
 
     return MCP_ERROR_NONE;
 }
@@ -180,7 +178,7 @@ static int list_activities_handler(cJSON* params, mcp_content_array_t* contents)
     }
 
     if (user_id == -1) {
-        return mcp_content_add_text(contents, sdsnew("Error: user_id parameter or REDMINE_USER_ID environment variable not set"));
+        return mcp_content_add_text(contents, "Error: user_id parameter or REDMINE_USER_ID environment variable not set");
     }
 
     /* prepare start date */
@@ -200,7 +198,7 @@ static int list_activities_handler(cJSON* params, mcp_content_array_t* contents)
 
     redmine_context_t* ctx = redmine_context_create();
     if (!ctx) {
-        return mcp_content_add_text(contents, sdsnew("Error: Failed to initialize Redmine context (check REDMINE_API_KEY)"));
+        return mcp_content_add_text(contents, "Error: Failed to initialize Redmine context (check REDMINE_API_KEY)");
     }
 
     char updated_on[128];
@@ -217,14 +215,14 @@ static int list_activities_handler(cJSON* params, mcp_content_array_t* contents)
     cJSON* issues_json = redmine_http_get(ctx, issues_path);
     if (!issues_json) {
         redmine_context_destroy(ctx);
-        return mcp_content_add_text(contents, sdsnew("Error: Failed to fetch issues from Redmine"));
+        return mcp_content_add_text(contents, "Error: Failed to fetch issues from Redmine");
     }
 
     cJSON* issues = cJSON_Select(issues_json, ".issues:a");
     if (!issues) {
         cJSON_Delete(issues_json);
         redmine_context_destroy(ctx);
-        return mcp_content_add_text(contents, sdsnew("Error: No issues found in response"));
+        return mcp_content_add_text(contents, "Error: No issues found in response");
     }
 
     cJSON** activities = NULL;
@@ -279,10 +277,10 @@ static int list_activities_handler(cJSON* params, mcp_content_array_t* contents)
     redmine_context_destroy(ctx);
 
     if (stb_arr_len(activities) == 0) {
-        return mcp_content_add_text(contents, sdsnew("No activities found in the specified period"));
+        return mcp_content_add_text(contents, "No activities found in the specified period");
     }
 
-    sds result = sdsempty();
+    mcp_content_add_text(contents, "Activities:\n");
 
     qsort(activities, stb_arr_len(activities), sizeof(cJSON*), activity_compare_by_created_on);
 
@@ -301,22 +299,22 @@ static int list_activities_handler(cJSON* params, mcp_content_array_t* contents)
             cJSON* detail = NULL;
             cJSON_ArrayForEach(detail, details) {
                 cJSON* name = cJSON_Select(detail, ".name:s");
-                result = sdscatprintf(result, "%s: %s (%d) modified %s\n", date, time_str, issue_id,
+                mcp_content_add_textf(contents, "%s: %s (%d) modified %s\n", date, time_str, issue_id,
                                      name ? name->valuestring : "unknown");
             }
         }
 
         cJSON* notes = cJSON_Select(activities[i], ".notes:s");
         if (notes && strlen(notes->valuestring) > 0) {
-            sds short_notes = sdsempty();
             if (strlen(notes->valuestring) > 30) {
-                short_notes = sdscatlen(short_notes, notes->valuestring, 30);
-                short_notes = sdscat(short_notes, "...");
+                char short_notes[34];
+                memcpy(short_notes, notes->valuestring, 30);
+                short_notes[30] = '\0';
+                strcpy(short_notes + 30, "...");
+                mcp_content_add_textf(contents, "%s: %s (%d) comment: %s\n", date, time_str, issue_id, short_notes);
             } else {
-                short_notes = sdscat(short_notes, notes->valuestring);
+                mcp_content_add_textf(contents, "%s: %s (%d) comment: %s\n", date, time_str, issue_id, notes->valuestring);
             }
-            result = sdscatprintf(result, "%s: %s (%d) comment: %s\n", date, time_str, issue_id, short_notes);
-            sdsfree(short_notes);
         }
     }
 
@@ -324,12 +322,6 @@ static int list_activities_handler(cJSON* params, mcp_content_array_t* contents)
         cJSON_Delete(activities[i]);
     }
     stb_arr_free(activities);
-
-    int ret = mcp_content_add_text(contents, result);
-    if (ret != 0) {
-        sdsfree(result);
-        return ret;
-    }
 
     return MCP_ERROR_NONE;
 }
