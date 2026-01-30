@@ -15,73 +15,89 @@ make clean
 ./build/hello
 ```
 
-## Linting
-```bash
-# Static analysis with cppcheck
-cppcheck --enable=all --suppress=missingIncludeSystem *.c
-
-# Scan with clang-analyzer
-scan-build gcc -c libmcp.c cJSON.c
-```
-
 ## Code Style Guidelines
 
-### File Organization
-- `libmcp.h` - Public API header (everything public, no internal headers)
-- `libmcp.c` - Implementation (all code in this file)
-- `examples/` - Example programs
-- `tests/` - Test files
+### File organization
+- `libmcp.h` - public API header (single public header; avoid internal
+  headers)
+- `libmcp.c` - implementation (all implementation in this file)
+- `examples/` - example programs
+- `tests/` - unit and integration tests
 
-### Naming Conventions
-- **Functions**: `mcp_lowercase_snake_case()` - prefix all public functions with `mcp_`
-- **Types**: `McpTypeName` - CamelCase, Mcp prefix
-- **Structs**: `mcp_type_name_t` - snake_case with _t suffix
-- **Macros**: `MCP_UPPERCASE_SNAKE_CASE`
-- **Constants**: `MCP_CONSTANT_NAME` (macros) or `mcp_constant` (static const)
-- **Internal symbols**: `mcp_internal_func()` or `_mcp_internal` (non-public, though single-header design means most things are exposed)
+### Naming conventions
+- Functions: `mcp_lowercase_snake_case()`; public functions should use
+  the `mcp_` prefix where appropriate.
+- Types: `McpTypeName` (CamelCase) for structs and enum type names.
+- Macros: `MCP_UPPERCASE_SNAKE_CASE`.
+- Constants: `MCP_CONSTANT_NAME` (macros) or `mcp_constant` (static
+  const symbols).
 
 ### Includes
-- All includes at top of .c file
-- Standard library includes first (stdio, stdlib, string, etc.)
-- No external dependencies beyond standard C library unless absolutely necessary
-- Header file should have include guards: `#ifndef LIBMCP_H` and `#define LIBMCP_H`
+- Place all `#include` directives at the top of `.c` files.
+- Order: project/osdep-like headers first if present, then system
+  headers `<...>`, then local/project headers `"..."`.
+- Header files must have include guards: `#ifndef LIBMCP_H` /
+  `#define LIBMCP_H` / `#endif`.
 
-### Types
-- Use `size_t` for sizes and indices
-- Use `int` for return codes (0 = success, negative = error)
-- Use `void*` for opaque handles when needed
-- Avoid `long long` and other platform-specific types unless needed
-- Use `stdint.h` types (uint32_t, int64_t, etc.) for fixed-width integers
+### Types and pointers
+- Use `size_t` for sizes and indices; use fixed-width types from
+  `stdint.h` when a specific width is required.
+- Use `int` for return codes (0 = success, negative = error) unless
+  another convention is needed.
+- Make pointers const-correct: use `const` on pointers that do not
+  modify the referenced data.
 
-### Error Handling
-- Functions return `int` with 0 on success, negative error codes on failure
-- Define error codes as enum or macros: `MCP_ERROR_NONE = 0`, `MCP_ERROR_OUT_OF_MEMORY = -1`, etc.
-- Provide `mcp_error_string(int code)` to convert error codes to descriptions
-- Always check return values from memory allocation, never dereference NULL
-- Avoid `assert()` in production code - return error codes instead
-- Use `errno` and `strerror()` for system errors
+### Error handling
+- Prefer simple, consistent error conventions: 0 on success, negative
+  on error, or non-null/null for pointer-returning functions.
+- Define error codes as enums or macros (e.g. `MCP_ERROR_NONE = 0`).
+- Provide `mcp_error_string(int code)` for human-readable messages.
+- Do not use `assert()` for recoverable errors; return error codes.
 
-### Memory Management
-- Caller owns memory returned by functions (document clearly)
-- Provide cleanup functions: `mcp_free(thing)`
-- Never allocate memory without corresponding free function
-- Document ownership in function comments (who allocates, who frees)
-- Prefer stack allocation for small, short-lived objects
+### Memory management
+- The caller owns memory returned from allocation functions unless
+  documented otherwise; provide matching free functions like
+  `mcp_free()`.
+- Prefer stack allocation for short-lived, small objects.
+- Prefer safer allocation helpers where available; document ownership
+  in function comments.
 
-### Formatting
-- 4 space indentation (no tabs)
-- Max line length: 80 characters
-- Opening brace on same line for functions, on new line for structs
-- Space after keywords: `if (x)`, `while (y)`, not `if(x)`
-- Space around operators: `a = b + c`, not `a=b+c`
-- Pointer placement: `int* ptr` or `int *ptr` (be consistent - prefer `int* ptr`)
+### Formatting and brace style
+- Use 4 spaces for indentation; do not use tabs (Makefiles are an
+  exception).
+- Aim for an 80 character line width; slightly exceed when it
+  improves readability (linting tools may warn at 100).
+- Always use braces for indented blocks, even if a block is a single
+  statement. Put the opening brace on the same line as the control
+  statement. For function definitions put the opening brace on a new
+  line:
+
+```
+if (cond) {
+    do_something();
+}
+
+void func(void)
+{
+    do_something();
+}
+```
+
+### Declarations and conditionals
+- Avoid mixing declarations and statements in the same block; prefer
+  declarations at the start of a block. Declaring loop variables in
+  `for` is acceptable.
+- Write conditionals as `if (a == 1)` (constant on the right) rather
+  than Yoda conditions.
 
 ### Comments
-- Use `/** */` for function documentation (brief description, parameters, return value)
-- Use `/* */` for longer explanations in implementation
-- Minimal inline comments - prefer self-documenting code
-- Document memory ownership in function docs
-- Example:
+- Use C-style `/* ... */` comments for multi-line comments with a
+  leading ` * ` column. Use `/** */` for function documentation (brief
+  description, parameters, return value) and include ownership notes
+  for returned memory.
+- Avoid `//` comments to keep style consistent across tools.
+
+Example:
 ```c
 /**
  * Creates a new MCP connection.
@@ -92,12 +108,26 @@ scan-build gcc -c libmcp.c cJSON.c
 mcp_connection_t* mcp_connect(const char* host, int port);
 ```
 
-### Function Design
-- Keep functions small and focused (max ~50 lines)
-- Pass context as first parameter: `mcp_do_thing(ctx, ...)`
-- Use const for input parameters that shouldn't be modified: `const char*`
-- Avoid global state - require context objects
-- Provide both synchronous and async APIs where appropriate
+### Strings, printing and safety
+- Prefer `snprintf`/`vsnprintf` over `sprintf`/`vsprintf`.
+- Prefer safe helpers for string copy/concat; avoid `strncpy` and
+  `strcat`.
+- When defining printf-like functions, annotate prototypes with
+  `__attribute__((format(printf, ...)))` for compiler format checks.
+
+### Automatic cleanup and helpers
+- When available, prefer scope-based cleanup helpers (for example
+  `g_autofree`/`g_autoptr` in GLib) to reduce explicit goto cleanup
+  paths.
+
+### QEMU-specific idioms (when applicable)
+- If adopting QEMU patterns, follow QOM struct member names like
+  `parent_obj`/`parent_class`, use QEMU GUARD macros for scoped
+  resource handling (e.g. `QEMU_LOCK_GUARD`), and use QEMU error
+  reporting APIs (`error_report`/`Error`) for consistent diagnostics.
+
+Follow the full QEMU coding style page for additional details and
+examples: https://qemu-project.gitlab.io/qemu/devel/style.html
 
 ## Project Structure
 ```
@@ -107,6 +137,7 @@ cJSON.h         # JSON library header
 cJSON.c         # JSON library implementation
 examples/
   hello.c       # Example usage
+  redmine.c     # Redmine MCP implementation
 build/          # Build output (gitignored)
 Makefile        # Build rules
 ```
