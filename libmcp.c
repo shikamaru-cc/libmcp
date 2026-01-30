@@ -13,7 +13,7 @@
 #define MCP_BUFFER_SIZE 8192
 
 
-struct mcp_server {
+struct McpServer {
     char* name;
     char* version;
     int tool_count;
@@ -22,13 +22,14 @@ struct mcp_server {
     mcp_tool_t tools[MCP_MAX_TOOLS];
 };
 
-struct mcp_connection {
-    mcp_server_t* server;
+struct McpConnection {
+    McpServer* server;
     FILE* in;
     FILE* out;
 };
 
-static char* read_jsonrpc_message(FILE* in) {
+static char* read_jsonrpc_message(FILE* in)
+{
     if (!in) return NULL;
 
     char* line = NULL;
@@ -50,14 +51,16 @@ static char* read_jsonrpc_message(FILE* in) {
     return line; /* caller must free() */
 }
 
-static int write_jsonrpc_message(FILE* out, const char* json_str) {
+static int write_jsonrpc_message(FILE* out, const char* json_str)
+{
     fwrite(json_str, 1, strlen(json_str), out);
     fwrite("\n", 1, 1, out);
     fflush(out);
     return 0;
 }
 
-const char* mcp_error_string(int code) {
+const char* mcp_error_string(int code)
+{
     switch (code) {
         case MCP_ERROR_NONE: return "Success";
         case MCP_ERROR_INVALID_ARGUMENT: return "Invalid argument";
@@ -70,8 +73,9 @@ const char* mcp_error_string(int code) {
     }
 }
 
-mcp_server_t* mcp_server_create(void) {
-    mcp_server_t* server = calloc(1, sizeof(mcp_server_t));
+McpServer* mcp_server_create(void)
+{
+    McpServer* server = calloc(1, sizeof(McpServer));
     if (!server) {
         return NULL;
     }
@@ -87,7 +91,8 @@ mcp_server_t* mcp_server_create(void) {
     return server;
 }
 
-void mcp_server_destroy(mcp_server_t* server) {
+void mcp_server_destroy(McpServer* server)
+{
     if (!server) {
         return;
     }
@@ -97,7 +102,8 @@ void mcp_server_destroy(mcp_server_t* server) {
     free(server);
 }
 
-int mcp_server_set_name(mcp_server_t* server, const char* name) {
+int mcp_server_set_name(McpServer* server, const char* name)
+{
     if (!server || !name) {
         return MCP_ERROR_INVALID_ARGUMENT;
     }
@@ -112,7 +118,8 @@ int mcp_server_set_name(mcp_server_t* server, const char* name) {
     return MCP_ERROR_NONE;
 }
 
-int mcp_server_set_version(mcp_server_t* server, const char* version) {
+int mcp_server_set_version(McpServer* server, const char* version)
+{
     if (!server || !version) {
         return MCP_ERROR_INVALID_ARGUMENT;
     }
@@ -127,7 +134,8 @@ int mcp_server_set_version(mcp_server_t* server, const char* version) {
     return MCP_ERROR_NONE;
 }
 
-void mcp_server_register_tool(mcp_server_t* server, const mcp_tool_t* tool) {
+void mcp_server_register_tool(McpServer* server, const mcp_tool_t* tool)
+{
     if (!server || !tool || !tool->name || !tool->handler) {
         fprintf(stderr, "mcp_server_register_tool: invalid argument\n");
         return;
@@ -145,7 +153,8 @@ void mcp_server_register_tool(mcp_server_t* server, const mcp_tool_t* tool) {
 
 /* Prompt API removed in this build */
 
-static cJSON* handle_initialize(mcp_server_t* server, cJSON* params) {
+static cJSON* handle_initialize(McpServer* server, cJSON* params)
+{
     (void)params;
     cJSON* response = cJSON_CreateObject();
 
@@ -173,7 +182,8 @@ static cJSON* handle_initialize(mcp_server_t* server, cJSON* params) {
     return response;
 }
 
-static const char* schema_type_to_string(mcp_input_schema_type_e t) {
+static const char* schema_type_to_string(mcp_input_schema_type_e t)
+{
     switch (t) {
         case MCP_INPUT_SCHEMA_TYPE_NUMBER: return "number";
         case MCP_INPUT_SCHEMA_TYPE_STRING: return "string";
@@ -185,9 +195,10 @@ static const char* schema_type_to_string(mcp_input_schema_type_e t) {
     }
 }
 
-/* Convert internal mcp_input_schema_t to a cJSON object representing the schema.
+/* Convert internal McpInputSchema to a cJSON object representing the schema.
    Returns a new cJSON object or NULL if schema is null/empty. */
-static cJSON* mcp_input_schema_to_json(const mcp_input_schema_t* s) {
+static cJSON* McpInputSchema_to_json(const McpInputSchema* s)
+{
     if (!s) return NULL;
     if (s->type == MCP_INPUT_SCHEMA_TYPE_NULL) return NULL;
 
@@ -200,9 +211,9 @@ static cJSON* mcp_input_schema_to_json(const mcp_input_schema_t* s) {
 
     if (s->type == MCP_INPUT_SCHEMA_TYPE_OBJECT) {
         cJSON* props = cJSON_CreateObject();
-        const mcp_input_schema_t* p = s->properties;
+        const McpInputSchema* p = s->properties;
         while (p && p->type != MCP_INPUT_SCHEMA_TYPE_NULL) {
-            cJSON* prop_schema = mcp_input_schema_to_json(p);
+            cJSON* prop_schema = McpInputSchema_to_json(p);
             if (p->name && prop_schema) {
                 cJSON_AddItemToObject(props, p->name, prop_schema);
             }
@@ -221,7 +232,7 @@ static cJSON* mcp_input_schema_to_json(const mcp_input_schema_t* s) {
     } else if (s->type == MCP_INPUT_SCHEMA_TYPE_ARRAY) {
         cJSON* items = NULL;
         if (s->properties && s->properties->type != MCP_INPUT_SCHEMA_TYPE_NULL) {
-            items = mcp_input_schema_to_json(s->properties);
+            items = McpInputSchema_to_json(s->properties);
         } else {
             items = cJSON_CreateObject();
             cJSON_AddStringToObject(items, "type", schema_type_to_string(s->type_arr));
@@ -232,7 +243,8 @@ static cJSON* mcp_input_schema_to_json(const mcp_input_schema_t* s) {
     return obj;
 }
 
-static cJSON* handle_tools_list(mcp_server_t* server, cJSON* params) {
+static cJSON* handle_tools_list(McpServer* server, cJSON* params)
+{
     (void)params;
     cJSON* tools = cJSON_CreateArray();
 
@@ -242,7 +254,7 @@ static cJSON* handle_tools_list(mcp_server_t* server, cJSON* params) {
         cJSON_AddStringToObject(tool, "description",
             server->tools[i].description ? server->tools[i].description : "");
 
-        cJSON* schema_json = mcp_input_schema_to_json(&server->tools[i].input_schema);
+        cJSON* schema_json = McpInputSchema_to_json(&server->tools[i].input_schema);
         if (schema_json) {
             cJSON_AddItemToObject(tool, "inputSchema", schema_json);
         }
@@ -255,7 +267,8 @@ static cJSON* handle_tools_list(mcp_server_t* server, cJSON* params) {
     return response;
 }
 
-static cJSON* handle_tools_call(mcp_server_t* server, cJSON* params) {
+static cJSON* handle_tools_call(McpServer* server, cJSON* params)
+{
     cJSON* name = cJSON_GetObjectItem(params, "name");
     cJSON* args = cJSON_GetObjectItem(params, "arguments");
 
@@ -265,7 +278,7 @@ static cJSON* handle_tools_call(mcp_server_t* server, cJSON* params) {
 
     for (int i = 0; i < server->tool_count; i++) {
         if (strcmp(server->tools[i].name, name->valuestring) == 0) {
-            mcp_content_array_t* contents = mcp_content_array_create();
+            McpContentArray* contents = mcp_content_array_create();
             if (!contents) return NULL;
 
             int err = server->tools[i].handler(args, contents);
@@ -279,7 +292,7 @@ static cJSON* handle_tools_call(mcp_server_t* server, cJSON* params) {
             cJSON_AddItemToObject(result, "content", content);
 
             for (int j = 0; j < contents->count; j++) {
-                mcp_content_item_t* it = &contents->items[j];
+                McpContentItem* it = &contents->items[j];
                 cJSON* content_obj = cJSON_CreateObject();
                 if (it->type == MCP_CONTENT_TYPE_TEXT) {
                     cJSON_AddStringToObject(content_obj, "type", "text");
@@ -303,23 +316,27 @@ static cJSON* handle_tools_call(mcp_server_t* server, cJSON* params) {
 }
 
 /* Prompts removed from this minimal implementation */
-static cJSON* handle_prompts_list(mcp_server_t* server, cJSON* params) {
+static cJSON* handle_prompts_list(McpServer* server, cJSON* params)
+{
     (void)server; (void)params;
     return NULL;
 }
 
-static void handle_notifications_initialized(mcp_server_t* server, cJSON* params) {
+static void handle_notifications_initialized(McpServer* server, cJSON* params)
+{
     (void)server;
     (void)params;
     /* Client has finished initialization. No action needed for now. */
 }
 
-static cJSON* handle_prompts_get(mcp_server_t* server, cJSON* params) {
+static cJSON* handle_prompts_get(McpServer* server, cJSON* params)
+{
     (void)server; (void)params;
     return NULL;
 }
 
-static int process_message(mcp_server_t* server, const char* json_str, char** response) {
+static int process_message(McpServer* server, const char* json_str, char** response)
+{
     cJSON* request = cJSON_Parse(json_str);
     if (!request) {
         return MCP_ERROR_PROTOCOL;
@@ -392,7 +409,8 @@ static int process_message(mcp_server_t* server, const char* json_str, char** re
     return MCP_ERROR_NONE;
 }
 
-int mcp_server_serve_stdio(mcp_server_t* server) {
+int mcp_server_serve_stdio(McpServer* server)
+{
     if (!server) {
         return MCP_ERROR_INVALID_ARGUMENT;
     }
@@ -423,12 +441,13 @@ int mcp_server_serve_stdio(mcp_server_t* server) {
 }
 
 /* Content array implementation */
-mcp_content_array_t* mcp_content_array_create(void) {
-    mcp_content_array_t* array = malloc(sizeof(mcp_content_array_t));
+McpContentArray* mcp_content_array_create(void)
+{
+    McpContentArray* array = malloc(sizeof(McpContentArray));
     if (!array) return NULL;
     array->count = 0;
     array->capacity = 4;
-    array->items = calloc(array->capacity, sizeof(mcp_content_item_t));
+    array->items = calloc(array->capacity, sizeof(McpContentItem));
     if (!array->items) {
         free(array);
         return NULL;
@@ -436,7 +455,8 @@ mcp_content_array_t* mcp_content_array_create(void) {
     return array;
 }
 
-void mcp_content_array_free(mcp_content_array_t* array) {
+void mcp_content_array_free(McpContentArray* array)
+{
     if (!array) return;
     for (int i = 0; i < array->count; i++) {
         free(array->items[i].text);
@@ -447,23 +467,25 @@ void mcp_content_array_free(mcp_content_array_t* array) {
     free(array);
 }
 
-static int mcp_content_array_ensure(mcp_content_array_t* array) {
+static int mcp_content_array_ensure(McpContentArray* array)
+{
     if (array->count < array->capacity) return MCP_ERROR_NONE;
     int newcap = array->capacity * 2;
-    mcp_content_item_t* n = realloc(array->items, newcap * sizeof(mcp_content_item_t));
+    McpContentItem* n = realloc(array->items, newcap * sizeof(McpContentItem));
     if (!n) return MCP_ERROR_OUT_OF_MEMORY;
     array->items = n;
     array->capacity = newcap;
     return MCP_ERROR_NONE;
 }
 
-int mcp_content_add_text(mcp_content_array_t* array, const char* text) {
+int mcp_content_add_text(McpContentArray* array, const char* text)
+{
     if (!array || !text) {
         return MCP_ERROR_INVALID_ARGUMENT;
     }
     int err = mcp_content_array_ensure(array);
     if (err != MCP_ERROR_NONE) { return err; }
-    mcp_content_item_t* it = &array->items[array->count++];
+    McpContentItem* it = &array->items[array->count++];
     it->type = MCP_CONTENT_TYPE_TEXT;
     it->text = strdup(text);
     it->data = NULL;
@@ -475,7 +497,8 @@ int mcp_content_add_text(mcp_content_array_t* array, const char* text) {
     return MCP_ERROR_NONE;
 }
 
-int mcp_content_add_textf(mcp_content_array_t* array, const char* fmt, ...) {
+int mcp_content_add_textf(McpContentArray* array, const char* fmt, ...)
+{
     if (!array || !fmt) return MCP_ERROR_INVALID_ARGUMENT;
     va_list ap;
     va_start(ap, fmt);
@@ -488,13 +511,14 @@ int mcp_content_add_textf(mcp_content_array_t* array, const char* fmt, ...) {
     return err;
 }
 
-int mcp_content_add_image(mcp_content_array_t* array, const char* data, const char* mime_type) {
+int mcp_content_add_image(McpContentArray* array, const char* data, const char* mime_type)
+{
     if (!array || !data || !mime_type) {
         return MCP_ERROR_INVALID_ARGUMENT;
     }
     int err = mcp_content_array_ensure(array);
     if (err != MCP_ERROR_NONE) { return err; }
-    mcp_content_item_t* it = &array->items[array->count++];
+    McpContentItem* it = &array->items[array->count++];
     it->type = MCP_CONTENT_TYPE_IMAGE;
     it->text = NULL;
     it->data = strdup(data);
@@ -508,7 +532,8 @@ int mcp_content_add_image(mcp_content_array_t* array, const char* data, const ch
     return MCP_ERROR_NONE;
 }
 
-int mcp_server_serve(mcp_server_t* server, const char* address, int port) {
+int mcp_server_serve(McpServer* server, const char* address, int port)
+{
     (void)server;
     (void)address;
     (void)port;
@@ -556,7 +581,8 @@ int mcp_server_serve(mcp_server_t* server, const char* address, int port) {
 #define JSEL_ARRAY 2          /* "[" */
 #define JSEL_TYPECHECK 3      /* ":" */
 #define JSEL_MAX_TOKEN 256
-cJSON *cJSON_Select(cJSON *o, const char *fmt, ...) {
+cJSON *cJSON_Select(cJSON *o, const char *fmt, ...)
+{
     int next = JSEL_INVALID;        /* Type of the next selector. */
     char token[JSEL_MAX_TOKEN+1];   /* Current token. */
     int tlen;                       /* Current length of the token. */

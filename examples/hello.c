@@ -4,7 +4,8 @@
 #include "../libmcp.h"
 #include "../cJSON.h"
 
-static int add_handler(cJSON* params, mcp_content_array_t* contents) {
+static int add_handler(cJSON* params, McpContentArray* contents)
+{
     cJSON* a = cJSON_GetObjectItem(params, "a");
     cJSON* b = cJSON_GetObjectItem(params, "b");
     int ai = cJSON_IsNumber(a) ? a->valueint : 0;
@@ -12,7 +13,8 @@ static int add_handler(cJSON* params, mcp_content_array_t* contents) {
     return mcp_content_add_textf(contents, "%d", ai + bi);
 }
 
-static int multiply_handler(cJSON* params, mcp_content_array_t* contents) {
+static int multiply_handler(cJSON* params, McpContentArray* contents)
+{
     cJSON* a = cJSON_GetObjectItem(params, "a");
     cJSON* b = cJSON_GetObjectItem(params, "b");
     int ai = cJSON_IsNumber(a) ? a->valueint : 0;
@@ -20,12 +22,13 @@ static int multiply_handler(cJSON* params, mcp_content_array_t* contents) {
     return mcp_content_add_textf(contents, "%d", ai * bi);
 }
 
-static int weather_handler(cJSON* params, mcp_content_array_t* contents) {
+static int weather_handler(cJSON* params, McpContentArray* contents)
+{
     (void)params;
     return mcp_content_add_text(contents, "sunny day baby");
 }
 
-static mcp_input_schema_t tool_add_schema[] = {
+static McpInputSchema tool_add_schema[] = {
     { .name = "a",
       .type = MCP_INPUT_SCHEMA_TYPE_NUMBER,
     },
@@ -45,7 +48,7 @@ static mcp_tool_t tool_add = {
     },
 };
 
-static mcp_input_schema_t tool_multiply_schema[] = {
+static McpInputSchema tool_multiply_schema[] = {
     { .name = "a",
       .type = MCP_INPUT_SCHEMA_TYPE_NUMBER,
     },
@@ -65,7 +68,7 @@ static mcp_tool_t tool_multiply = {
     },
 };
 
-static mcp_input_schema_t tool_weather_schema[] = {
+static McpInputSchema tool_weather_schema[] = {
     mcp_input_schema_null
 };
 
@@ -79,8 +82,9 @@ static mcp_tool_t tool_weather = {
     },
 };
 
-int main(void) {
-    mcp_server_t* server = mcp_server_create();
+int main(void)
+{
+    McpServer* server = mcp_server_create();
     if (!server) {
         fprintf(stderr, "Failed to create server\n");
         return 1;

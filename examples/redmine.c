@@ -8,7 +8,8 @@
 #include "cJSON.h"
 #include "stb.h"
 
-static size_t write_callback(void* contents, size_t size, size_t nmemb, void* userp) {
+static size_t write_callback(void* contents, size_t size, size_t nmemb, void* userp)
+{
     size_t realsize = size * nmemb;
     char** s = (char**)userp;
     size_t oldlen = *s ? strlen(*s) : 0;
@@ -20,14 +21,15 @@ static size_t write_callback(void* contents, size_t size, size_t nmemb, void* us
     return realsize;
 }
 
-typedef struct redmine_context {
+typedef struct RedmineContext {
     char* base_url;
     char* api_key;
     CURL* curl;
     struct curl_slist* headers;
-} redmine_context_t;
+} RedmineContext;
 
-static redmine_context_t* redmine_context_create(void) {
+static RedmineContext* RedmineContext_create(void)
+{
     const char* base_url = getenv("REDMINE_URL");
     const char* api_key = getenv("REDMINE_API_KEY");
 
@@ -39,7 +41,7 @@ static redmine_context_t* redmine_context_create(void) {
         return NULL;
     }
 
-    redmine_context_t* ctx = calloc(1, sizeof(redmine_context_t));
+    RedmineContext* ctx = calloc(1, sizeof(RedmineContext));
     if (!ctx) {
         return NULL;
     }
@@ -72,7 +74,8 @@ static redmine_context_t* redmine_context_create(void) {
     return ctx;
 }
 
-static void redmine_context_destroy(redmine_context_t* ctx) {
+static void RedmineContext_destroy(RedmineContext* ctx)
+{
     if (!ctx) {
         return;
     }
@@ -91,7 +94,8 @@ static void redmine_context_destroy(redmine_context_t* ctx) {
     free(ctx);
 }
 
-static cJSON* redmine_http_get(redmine_context_t* ctx, const char* path) {
+static cJSON* RedmineHttpGet(RedmineContext* ctx, const char* path)
+{
     char url[512];
     if (path[0] == '/') {
         snprintf(url, sizeof(url), "%s%s", ctx->base_url, path);
@@ -116,24 +120,25 @@ static cJSON* redmine_http_get(redmine_context_t* ctx, const char* path) {
     return json;
 }
 
-static int list_projects_handler(cJSON* params, mcp_content_array_t* contents) {
+static int list_projects_handler(cJSON* params, McpContentArray* contents)
+{
     (void)params;
 
-    redmine_context_t* ctx = redmine_context_create();
+    RedmineContext* ctx = RedmineContext_create();
     if (!ctx) {
         return mcp_content_add_text(contents, "Error: Failed to initialize Redmine context (check REDMINE_API_KEY)");
     }
 
-    cJSON* json = redmine_http_get(ctx, "projects.json");
+    cJSON* json = RedmineHttpGet(ctx, "projects.json");
     if (!json) {
-        redmine_context_destroy(ctx);
+        RedmineContext_destroy(ctx);
         return mcp_content_add_text(contents, "Error: Failed to fetch projects from Redmine");
     }
 
     cJSON* projects = cJSON_Select(json, ".projects");
     if (!projects || !cJSON_IsArray(projects)) {
         cJSON_Delete(json);
-        redmine_context_destroy(ctx);
+        RedmineContext_destroy(ctx);
         return mcp_content_add_text(contents, "Error: No projects found in response");
     }
 
@@ -155,12 +160,13 @@ static int list_projects_handler(cJSON* params, mcp_content_array_t* contents) {
     }
 
     cJSON_Delete(json);
-    redmine_context_destroy(ctx);
+    RedmineContext_destroy(ctx);
 
     return MCP_ERROR_NONE;
 }
 
-static int activity_compare_by_created_on(const void* a, const void* b) {
+static int activity_compare_by_created_on(const void* a, const void* b)
+{
     const cJSON* act_a = *(const cJSON**)a;
     const cJSON* act_b = *(const cJSON**)b;
     cJSON* time_a = cJSON_GetObjectItem(act_a, "created_on");
@@ -168,7 +174,8 @@ static int activity_compare_by_created_on(const void* a, const void* b) {
     return strcmp(time_a->valuestring, time_b->valuestring);
 }
 
-static int list_activities_handler(cJSON* params, mcp_content_array_t* contents) {
+static int list_activities_handler(cJSON* params, McpContentArray* contents)
+{
     const char* user_id_str = getenv("REDMINE_USER_ID");
 
     cJSON* user_id_json = cJSON_GetObjectItem(params, "user_id");
@@ -196,7 +203,7 @@ static int list_activities_handler(cJSON* params, mcp_content_array_t* contents)
 
     /* issue request */
 
-    redmine_context_t* ctx = redmine_context_create();
+    RedmineContext* ctx = RedmineContext_create();
     if (!ctx) {
         return mcp_content_add_text(contents, "Error: Failed to initialize Redmine context (check REDMINE_API_KEY)");
     }
@@ -212,16 +219,16 @@ static int list_activities_handler(cJSON* params, mcp_content_array_t* contents)
 
     curl_free(updated_on_escape);
 
-    cJSON* issues_json = redmine_http_get(ctx, issues_path);
+    cJSON* issues_json = RedmineHttpGet(ctx, issues_path);
     if (!issues_json) {
-        redmine_context_destroy(ctx);
+        RedmineContext_destroy(ctx);
         return mcp_content_add_text(contents, "Error: Failed to fetch issues from Redmine");
     }
 
     cJSON* issues = cJSON_Select(issues_json, ".issues:a");
     if (!issues) {
         cJSON_Delete(issues_json);
-        redmine_context_destroy(ctx);
+        RedmineContext_destroy(ctx);
         return mcp_content_add_text(contents, "Error: No issues found in response");
     }
 
@@ -244,7 +251,7 @@ static int list_activities_handler(cJSON* params, mcp_content_array_t* contents)
         char detail_path[256];
         snprintf(detail_path, sizeof(detail_path), "issues/%d.json?include=journals", issue_id);
 
-        cJSON* detail_json = redmine_http_get(ctx, detail_path);
+        cJSON* detail_json = RedmineHttpGet(ctx, detail_path);
         if (!detail_json) {
             continue;
         }
@@ -274,7 +281,7 @@ static int list_activities_handler(cJSON* params, mcp_content_array_t* contents)
     }
 
     cJSON_Delete(issues_json);
-    redmine_context_destroy(ctx);
+    RedmineContext_destroy(ctx);
 
     if (stb_arr_len(activities) == 0) {
         return mcp_content_add_text(contents, "No activities found in the specified period");
@@ -326,7 +333,7 @@ static int list_activities_handler(cJSON* params, mcp_content_array_t* contents)
     return MCP_ERROR_NONE;
 }
 
-static mcp_input_schema_t tool_list_activities_schema[] = {
+static McpInputSchema tool_list_activities_schema[] = {
     {
         .name = "user_id",
         .description = "User ID to get activities for (optional, can be set via REDMINE_USER_ID env)",
@@ -350,7 +357,7 @@ static mcp_tool_t tool_list_activities = {
     },
 };
 
-static mcp_input_schema_t tool_list_projects_schema[] = {
+static McpInputSchema tool_list_projects_schema[] = {
     mcp_input_schema_null
 };
 
@@ -364,10 +371,11 @@ static mcp_tool_t tool_list_projects = {
     },
 };
 
-int main(void) {
+int main(void)
+{
     curl_global_init(CURL_GLOBAL_DEFAULT);
 
-    mcp_server_t* server = mcp_server_create();
+    McpServer* server = mcp_server_create();
     if (!server) {
         fprintf(stderr, "Failed to create server\n");
         curl_global_cleanup();

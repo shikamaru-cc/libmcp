@@ -10,8 +10,8 @@
 extern "C" {
 #endif
 
-typedef struct mcp_server mcp_server_t;
-typedef struct mcp_connection mcp_connection_t;
+typedef struct McpServer McpServer;
+typedef struct McpConnection McpConnection;
 
 typedef int mcp_error_code_t;
 
@@ -34,29 +34,29 @@ typedef enum {
     MCP_INPUT_SCHEMA_TYPE_OBJECT = 1 << 4,
 } mcp_input_schema_type_e;
 
-typedef struct mcp_input_schema {
+typedef struct McpInputSchema {
     const char* name;
     const char* description;
     mcp_input_schema_type_e type;
-    mcp_input_schema_type_e type_arr; // only make sense for type == array
-    struct mcp_input_schema* properties;
+    mcp_input_schema_type_e type_arr; /* only make sense for type == array */
+    struct McpInputSchema* properties;
     const char** required;
-} mcp_input_schema_t;
+} McpInputSchema;
 
 #define mcp_input_schema_null { .type = MCP_INPUT_SCHEMA_TYPE_NULL }
 
 /* Tool handler returns int error code and fills provided content array.
  * The handler must return MCP_ERROR_NONE on success. */
-typedef struct mcp_content_item mcp_content_item_t;
-typedef struct mcp_content_array mcp_content_array_t;
+typedef struct McpContentItem McpContentItem;
+typedef struct McpContentArray McpContentArray;
 
-typedef int (*mcp_tool_handler_t)(cJSON* params, mcp_content_array_t* contents);
+typedef int (*mcp_tool_handler_t)(cJSON* params, McpContentArray* contents);
 
 typedef struct {
     const char* name;
     const char* description;
     mcp_tool_handler_t handler;
-    mcp_input_schema_t input_schema;
+    McpInputSchema input_schema;
 } mcp_tool_t;
 
 /* Content API */
@@ -66,40 +66,40 @@ typedef enum {
     MCP_CONTENT_TYPE_RESOURCE = 2
 } mcp_content_type_t;
 
-struct mcp_content_item {
+struct McpContentItem {
     mcp_content_type_t type;
     char* text;      /* owned */
     char* data;      /* owned: image data (base64) or resource */
     char* mime_type; /* owned */
 };
 
-struct mcp_content_array {
-    mcp_content_item_t* items;
+struct McpContentArray {
+    McpContentItem* items;
     int count;
     int capacity;
 };
 
 /* Content array management */
-mcp_content_array_t* mcp_content_array_create(void);
-void mcp_content_array_free(mcp_content_array_t* array);
+McpContentArray* mcp_content_array_create(void);
+void mcp_content_array_free(McpContentArray* array);
 
 /* Add content items - libmcp makes copies of provided strings. */
-int mcp_content_add_text(mcp_content_array_t* array, const char* text);
-int mcp_content_add_textf(mcp_content_array_t* array, const char* fmt, ...);
-int mcp_content_add_image(mcp_content_array_t* array, const char* data, const char* mime_type);
+int mcp_content_add_text(McpContentArray* array, const char* text);
+int mcp_content_add_textf(McpContentArray* array, const char* fmt, ...);
+int mcp_content_add_image(McpContentArray* array, const char* data, const char* mime_type);
 
 
 /* Server lifecycle and registration */
-mcp_server_t* mcp_server_create(void);
+McpServer* mcp_server_create(void);
 
-void mcp_server_destroy(mcp_server_t* server);
-int mcp_server_set_name(mcp_server_t* server, const char* name);
-int mcp_server_set_version(mcp_server_t* server, const char* version);
-void mcp_server_register_tool(mcp_server_t* server, const mcp_tool_t* tool);
+void mcp_server_destroy(McpServer* server);
+int mcp_server_set_name(McpServer* server, const char* name);
+int mcp_server_set_version(McpServer* server, const char* version);
+void mcp_server_register_tool(McpServer* server, const mcp_tool_t* tool);
 
-int mcp_server_serve(mcp_server_t* server, const char* address, int port);
+int mcp_server_serve(McpServer* server, const char* address, int port);
 
-int mcp_server_serve_stdio(mcp_server_t* server);
+int mcp_server_serve_stdio(McpServer* server);
 
 const char* mcp_error_string(int code);
 
