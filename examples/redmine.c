@@ -21,56 +21,6 @@ static size_t write_callback(void* contents, size_t size, size_t nmemb, void* us
     return realsize;
 }
 
-static cJSON* redmine_post(const char* path, const char* data)
-{
-    CURL* curl = NULL;
-    struct curl_slist* headers = NULL;
-    char* response = NULL;
-
-    while (path && *path == '/') path++;
-    char url[512];
-    snprintf(url, sizeof(url), "%s/%s", redmine_base_url, path);
-
-    char auth_header[256];
-    snprintf(auth_header, sizeof(auth_header), "X-Redmine-API-Key: %s", redmine_api_key);
-
-    curl = curl_easy_init();
-    if (curl == NULL)
-        goto fail;
-
-    headers = curl_slist_append(NULL, auth_header);
-    headers = curl_slist_append(headers, "Content-Type: application/json");
-    if (headers == NULL)
-        goto fail;
-
-    response = strdup("");
-    if (response == NULL)
-        goto fail;
-
-    curl_easy_setopt(curl, CURLOPT_URL, url);
-    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
-    curl_easy_setopt(curl, CURLOPT_POST, 1L);
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, data);
-
-    CURLcode res = curl_easy_perform(curl);
-    if (res != CURLE_OK)
-        goto fail;
-
-    cJSON* json = cJSON_Parse(response);
-    curl_easy_cleanup(curl);
-    curl_slist_free_all(headers);
-    free(response);
-    return json;
-
-fail:
-    if (curl) curl_easy_cleanup(curl);
-    if (headers) curl_slist_free_all(headers);
-    if (response) free(response);
-    return NULL;
-}
-
 typedef struct {
     int id;
     char* name;
@@ -125,6 +75,56 @@ static cJSON* redmine_get(const char* path)
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
+
+    CURLcode res = curl_easy_perform(curl);
+    if (res != CURLE_OK)
+        goto fail;
+
+    cJSON* json = cJSON_Parse(response);
+    curl_easy_cleanup(curl);
+    curl_slist_free_all(headers);
+    free(response);
+    return json;
+
+fail:
+    if (curl) curl_easy_cleanup(curl);
+    if (headers) curl_slist_free_all(headers);
+    if (response) free(response);
+    return NULL;
+}
+
+static cJSON* redmine_post(const char* path, const char* data)
+{
+    CURL* curl = NULL;
+    struct curl_slist* headers = NULL;
+    char* response = NULL;
+
+    while (path && *path == '/') path++;
+    char url[512];
+    snprintf(url, sizeof(url), "%s/%s", redmine_base_url, path);
+
+    char auth_header[256];
+    snprintf(auth_header, sizeof(auth_header), "X-Redmine-API-Key: %s", redmine_api_key);
+
+    curl = curl_easy_init();
+    if (curl == NULL)
+        goto fail;
+
+    headers = curl_slist_append(NULL, auth_header);
+    headers = curl_slist_append(headers, "Content-Type: application/json");
+    if (headers == NULL)
+        goto fail;
+
+    response = strdup("");
+    if (response == NULL)
+        goto fail;
+
+    curl_easy_setopt(curl, CURLOPT_URL, url);
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
+    curl_easy_setopt(curl, CURLOPT_POST, 1L);
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, data);
 
     CURLcode res = curl_easy_perform(curl);
     if (res != CURLE_OK)
