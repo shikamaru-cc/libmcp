@@ -26,10 +26,18 @@ typedef struct {
     char* name;
 } IssueStatus;
 
+typedef struct {
+    int id;
+    char* name;
+    char* identifier;
+    char* description;
+} Project;
+
 static const char* redmine_base_url;
 static const char* redmine_api_key;
 static int redmine_user_id;
 static IssueStatus* redmine_issue_statuses = NULL;
+static Project* redmine_projects = NULL;
 
 static cJSON* redmine_get(const char* path)
 {
@@ -105,6 +113,37 @@ static void redmine_issue_statuses_init()
     cJSON_Delete(json);
 }
 
+static void redmine_projects_init()
+{
+    cJSON* json = redmine_get("projects.json");
+    if (!json)
+        return;
+
+    cJSON* projects = cJSON_Select(json, ".projects:a");
+    if (!projects) {
+        cJSON_Delete(json);
+        return;
+    }
+
+    cJSON* project = NULL;
+    cJSON_ArrayForEach(project, projects) {
+        cJSON* id = cJSON_Select(project, ".id:n");
+        cJSON* name = cJSON_Select(project, ".name:s");
+        cJSON* identifier = cJSON_Select(project, ".identifier:s");
+        cJSON* description = cJSON_Select(project, ".description:s");
+        if (id && name && identifier) {
+            Project p;
+            p.id = id->valueint;
+            p.name = strdup(name->valuestring);
+            p.identifier = strdup(identifier->valuestring);
+            p.description = description ? strdup(description->valuestring) : NULL;
+            *stb_arr_add(redmine_projects) = p;
+        }
+    }
+
+    cJSON_Delete(json);
+}
+
 static void redmine_user_id_init()
 {
     cJSON* json = redmine_get("users/current.json");
@@ -126,6 +165,17 @@ static void redmine_issue_statuses_cleanup()
     stb_arr_free(redmine_issue_statuses);
 }
 
+static void redmine_projects_cleanup()
+{
+    for (int i = 0; i < stb_arr_len(redmine_projects); i++) {
+        free(redmine_projects[i].name);
+        free(redmine_projects[i].identifier);
+        if (redmine_projects[i].description)
+            free(redmine_projects[i].description);
+    }
+    stb_arr_free(redmine_projects);
+}
+
 static const char* redmine_status_id_to_name(int id)
 {
     for (int i = 0; i < stb_arr_len(redmine_issue_statuses); i++) {
@@ -140,11 +190,13 @@ static void redmine_init()
     redmine_base_url = getenv("REDMINE_URL");
     redmine_api_key = getenv("REDMINE_API_KEY");
     redmine_user_id_init();
+    redmine_projects_init();
     redmine_issue_statuses_init();
 }
 
 static void redmine_cleanup()
 {
+    redmine_projects_cleanup();
     redmine_issue_statuses_cleanup();
 }
 
@@ -156,38 +208,22 @@ static McpToolCallResult* list_projects_handler(cJSON* params)
     if (!r)
         return NULL;
 
-    cJSON* json = redmine_get("projects.json");
-    if (!json) {
-        mcp_tool_call_result_add_text(r, "Failed to fetch projects from Redmine");
-        goto fail;
+    if (stb_arr_len(redmine_projects) == 0) {
+        mcp_tool_call_result_set_error(r);
+        mcp_tool_call_result_add_text(r, "No projects available");
+        return r;
     }
 
-    cJSON* projects = cJSON_Select(json, ".projects:a");
-    if (!projects) {
-        mcp_tool_call_result_add_text(r, "No projects found in response");
-        goto fail;
-    }
-
-    cJSON* project = NULL;
-    cJSON_ArrayForEach(project, projects) {
-        cJSON* id = cJSON_Select(project, ".id:n");
-        cJSON* name = cJSON_Select(project, ".name:s");
-        cJSON* identifier = cJSON_Select(project, ".identifier:s");
-        cJSON* description = cJSON_Select(project, ".description:s");
+    for (int i = 0; i < stb_arr_len(redmine_projects); i++) {
+        Project* p = &redmine_projects[i];
         mcp_tool_call_result_add_textf(r,
             "ID: %d\nName: %s\nIdentifier: %s\nDescription: %s\n",
-            id ? id->valueint : 0,
-            name ? name->valuestring : "N/A",
-            identifier ? identifier->valuestring : "N/A",
-            description ? description->valuestring: "N/A");
+            p->id,
+            p->name ? p->name : "N/A",
+            p->identifier ? p->identifier : "N/A",
+            p->description ? p->description : "N/A");
     }
 
-    cJSON_Delete(json);
-    return r;
-
-fail:
-    mcp_tool_call_result_set_error(r);
-    if (json) cJSON_Delete(json);
     return r;
 }
 
