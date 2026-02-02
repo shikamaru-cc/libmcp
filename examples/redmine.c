@@ -1001,6 +1001,136 @@ static McpTool tool_add_issue_note = {
     },
 };
 
+static McpToolCallResult* create_issue_handler(cJSON* params)
+{
+    McpToolCallResult* r = mcp_tool_call_result_create();
+    if (!r)
+        return NULL;
+
+    cJSON* project_id_json = cJSON_Select(params, ".project_id:n");
+    if (!project_id_json) {
+        mcp_tool_call_result_set_error(r);
+        mcp_tool_call_result_add_text(r, "project_id parameter is required");
+        return r;
+    }
+
+    cJSON* subject_json = cJSON_Select(params, ".subject:s");
+    if (!subject_json) {
+        mcp_tool_call_result_set_error(r);
+        mcp_tool_call_result_add_text(r, "subject parameter is required");
+        return r;
+    }
+
+    cJSON* issue_obj = cJSON_CreateObject();
+    cJSON* project_obj = cJSON_CreateObject();
+    cJSON_AddNumberToObject(project_obj, "id", project_id_json->valueint);
+    cJSON_AddItemToObject(issue_obj, "project", project_obj);
+
+    cJSON* subject_str = cJSON_CreateString(subject_json->valuestring);
+    cJSON_AddItemToObject(issue_obj, "subject", subject_str);
+
+    cJSON* description_json = cJSON_Select(params, ".description:s");
+    if (description_json) {
+        cJSON* desc_str = cJSON_CreateString(description_json->valuestring);
+        cJSON_AddItemToObject(issue_obj, "description", desc_str);
+    }
+
+    cJSON* tracker_id_json = cJSON_Select(params, ".tracker_id:n");
+    if (tracker_id_json) {
+        cJSON* tracker_obj = cJSON_CreateObject();
+        cJSON_AddNumberToObject(tracker_obj, "id", tracker_id_json->valueint);
+        cJSON_AddItemToObject(issue_obj, "tracker", tracker_obj);
+    }
+
+    cJSON* status_id_json = cJSON_Select(params, ".status_id:n");
+    if (status_id_json) {
+        cJSON* status_obj = cJSON_CreateObject();
+        cJSON_AddNumberToObject(status_obj, "id", status_id_json->valueint);
+        cJSON_AddItemToObject(issue_obj, "status", status_obj);
+    }
+
+    cJSON* priority_id_json = cJSON_Select(params, ".priority_id:n");
+    if (priority_id_json) {
+        cJSON* priority_obj = cJSON_CreateObject();
+        cJSON_AddNumberToObject(priority_obj, "id", priority_id_json->valueint);
+        cJSON_AddItemToObject(issue_obj, "priority", priority_obj);
+    }
+
+    cJSON* assigned_to_id_json = cJSON_Select(params, ".assigned_to_id:n");
+    if (assigned_to_id_json) {
+        cJSON* assigned_to_obj = cJSON_CreateObject();
+        cJSON_AddNumberToObject(assigned_to_obj, "id", assigned_to_id_json->valueint);
+        cJSON_AddItemToObject(issue_obj, "assigned_to", assigned_to_obj);
+    }
+
+    cJSON* root = cJSON_CreateObject();
+    cJSON_AddItemToObject(root, "issue", issue_obj);
+
+    char* data = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+
+    cJSON* json = redmine_post("issues.json", data);
+    free(data);
+
+    if (!json) {
+        mcp_tool_call_result_set_error(r);
+        mcp_tool_call_result_add_text(r, "Failed to create issue");
+        return r;
+    }
+
+    cJSON* issue = cJSON_Select(json, ".issue");
+    if (issue) {
+        cJSON* id = cJSON_Select(issue, ".id:n");
+        if (id)
+            mcp_tool_call_result_add_textf(r, "Issue #%d created successfully\n", id->valueint);
+    }
+
+    cJSON_Delete(json);
+    return r;
+}
+
+static McpInputSchema tool_create_issue_schema[] = {
+    { .name = "project_id",
+      .description = "Project ID to create issue in",
+      .type = MCP_INPUT_SCHEMA_TYPE_NUMBER,
+    },
+    { .name = "subject",
+      .description = "Issue subject/title",
+      .type = MCP_INPUT_SCHEMA_TYPE_STRING,
+    },
+    { .name = "description",
+      .description = "Issue description (optional)",
+      .type = MCP_INPUT_SCHEMA_TYPE_STRING,
+    },
+    { .name = "tracker_id",
+      .description = "Tracker ID (optional)",
+      .type = MCP_INPUT_SCHEMA_TYPE_NUMBER,
+    },
+    { .name = "status_id",
+      .description = "Status ID (optional)",
+      .type = MCP_INPUT_SCHEMA_TYPE_NUMBER,
+    },
+    { .name = "priority_id",
+      .description = "Priority ID (optional)",
+      .type = MCP_INPUT_SCHEMA_TYPE_NUMBER,
+    },
+    { .name = "assigned_to_id",
+      .description = "User ID to assign to (optional)",
+      .type = MCP_INPUT_SCHEMA_TYPE_NUMBER,
+    },
+    mcp_input_schema_null
+};
+
+static McpTool tool_create_issue = {
+    .name = "create_issue",
+    .description = "Create a new issue in Redmine",
+    .handler = create_issue_handler,
+    .input_schema = {
+        .type = MCP_INPUT_SCHEMA_TYPE_OBJECT,
+        .properties = tool_create_issue_schema,
+    },
+};
+
 int main(int argc, const char* argv[])
 {
     curl_global_init(CURL_GLOBAL_DEFAULT);
