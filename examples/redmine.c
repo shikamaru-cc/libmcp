@@ -465,6 +465,98 @@ static McpToolCallResult* list_activities_handler(cJSON* params)
     return r;
 }
 
+static McpToolCallResult* search_wiki_handler(cJSON* params)
+{
+    McpToolCallResult* r = mcp_tool_call_result_create();
+    if (!r)
+        return NULL;
+
+    cJSON* query_json = cJSON_GetObjectItem(params, "q");
+    if (!query_json || !cJSON_IsString(query_json)) {
+        mcp_tool_call_result_set_error(r);
+        mcp_tool_call_result_add_text(r, "Query parameter 'q' is required");
+        return r;
+    }
+
+    const char* query = query_json->valuestring;
+
+    cJSON* project_identifier_json = cJSON_GetObjectItem(params, "project_identifier");
+    const char* project_identifier = project_identifier_json && cJSON_IsString(project_identifier_json)
+        ? project_identifier_json->valuestring
+        : NULL;
+
+    int limit = 25;
+    cJSON* limit_json = cJSON_GetObjectItem(params, "limit");
+    if (limit_json && cJSON_IsNumber(limit_json)) {
+        limit = limit_json->valueint;
+        if (limit < 1) limit = 25;
+    }
+
+    int offset = 0;
+    cJSON* offset_json = cJSON_GetObjectItem(params, "offset");
+    if (offset_json && cJSON_IsNumber(offset_json)) {
+        offset = offset_json->valueint;
+        if (offset < 0) offset = 0;
+    }
+
+    int all_words = 0;
+    cJSON* all_words_json = cJSON_GetObjectItem(params, "all_words");
+    if (all_words_json && cJSON_IsTrue(all_words_json)) {
+        all_words = 1;
+    }
+
+    int titles_only = 0;
+    cJSON* titles_only_json = cJSON_GetObjectItem(params, "titles_only");
+    if (titles_only_json && cJSON_IsTrue(titles_only_json)) {
+        titles_only = 1;
+    }
+
+    char* query_escaped = curl_easy_escape(NULL, query, 0);
+    char search_path[512];
+    int written = snprintf(search_path, sizeof(search_path),
+        "search.json?q=%s&wiki_pages=1&limit=%d&offset=%d&all_words=%d&titles_only=%d",
+        query_escaped, limit, offset, all_words, titles_only);
+
+    if (project_identifier) {
+        char* project_escaped = curl_easy_escape(NULL, project_identifier, 0);
+        snprintf(search_path + written, sizeof(search_path) - written, "&scope=%s", project_escaped);
+        curl_free(project_escaped);
+    }
+
+    curl_free(query_escaped);
+
+    cJSON* json = redmine_get(search_path);
+    if (!json) {
+        mcp_tool_call_result_set_error(r);
+        mcp_tool_call_result_add_text(r, "Failed to search wiki pages from Redmine");
+        return r;
+    }
+
+    cJSON* total_count = cJSON_Select(json, ".total_count:n");
+    if (total_count)
+        mcp_tool_call_result_add_textf(r, "Total: %d\n", total_count->valueint);
+
+    cJSON* off = cJSON_Select(json, ".offset:n");
+    if (off)
+        mcp_tool_call_result_add_textf(r, "Offset: %d\n", off->valueint);
+
+    cJSON* result = NULL;
+    cJSON* results = cJSON_Select(json, ".results:a");
+    cJSON_ArrayForEach(result, results) {
+        cJSON* title = cJSON_Select(result, ".title:s");
+        cJSON* description = cJSON_Select(result, ".description:s");
+        if (!title || !description) continue;
+        mcp_tool_call_result_add_textf(r,
+            "Title: %s\n"
+            "Description: %s\n",
+            title->valuestring,
+            description->valuestring);
+    }
+
+    cJSON_Delete(json);
+    return r;
+}
+
 static McpInputSchema tool_list_activities_schema[] = {
     { .name = "user_id",
       .description = "User ID to get activities for (optional, can be set via REDMINE_USER_ID env)",
@@ -484,6 +576,44 @@ static McpTool tool_list_activities = {
     .input_schema = {
         .type = MCP_INPUT_SCHEMA_TYPE_OBJECT,
         .properties = tool_list_activities_schema,
+    },
+};
+
+static McpInputSchema tool_search_wiki_schema[] = {
+    { .name = "q",
+      .description = "Search query string",
+      .type = MCP_INPUT_SCHEMA_TYPE_STRING,
+    },
+    { .name = "project_identifier",
+      .description = "Limit search to specific project (optional, uses project identifier like 'my-project')",
+      .type = MCP_INPUT_SCHEMA_TYPE_STRING,
+    },
+    { .name = "limit",
+      .description = "Maximum number of results to return (optional, default: 25)",
+      .type = MCP_INPUT_SCHEMA_TYPE_NUMBER,
+    },
+    { .name = "offset",
+      .description = "Skip this number of results for pagination (optional, default: 0)",
+      .type = MCP_INPUT_SCHEMA_TYPE_NUMBER,
+    },
+    { .name = "all_words",
+      .description = "Match all query words (true) or any word (false) (optional, default: false)",
+      .type = MCP_INPUT_SCHEMA_TYPE_BOOL,
+    },
+    { .name = "titles_only",
+      .description = "Search only in page titles, not content (optional, default: false)",
+      .type = MCP_INPUT_SCHEMA_TYPE_BOOL,
+    },
+    mcp_input_schema_null
+};
+
+static McpTool tool_search_wiki = {
+    .name = "search_wiki",
+    .description = "Search wiki pages across Redmine projects",
+    .handler = search_wiki_handler,
+    .input_schema = {
+        .type = MCP_INPUT_SCHEMA_TYPE_OBJECT,
+        .properties = tool_search_wiki_schema,
     },
 };
 
@@ -510,6 +640,7 @@ int main(int argc, const char* argv[])
     mcp_set_version("1.0.0");
     mcp_add_tool(&tool_list_projects);
     mcp_add_tool(&tool_list_activities);
+    mcp_add_tool(&tool_search_wiki);
 
     fprintf(stderr, "Redmine MCP Server running...\n");
     mcp_main(argc, argv);
