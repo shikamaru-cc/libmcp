@@ -857,7 +857,7 @@ static McpToolCallResult* list_issues_handler(cJSON* params)
             "tracker_id=%d&", tracker_id_json->valueint);
     }
 
-    char path[512];
+    char path[1024];
     snprintf(path, sizeof(path), "issues.json?%slimit=%d&offset=%d&sort=updated_on:desc",
         query, limit, offset);
 
@@ -1362,7 +1362,7 @@ static McpToolCallResult* list_time_entries_handler(cJSON* params)
             "issue_id=%d&", issue_id_json->valueint);
     }
 
-    char path[512];
+    char path[1024];
     snprintf(path, sizeof(path), "time_entries.json?%slimit=%d&offset=%d&sort=spent_on:desc",
         query, limit, offset);
 
