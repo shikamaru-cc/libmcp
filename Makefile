@@ -5,6 +5,9 @@ CURL_LIBS = $(shell curl-config --libs)
 
 all: build/hello build/redmine
 
+hello: build/hello
+redmine: build/redmine
+
 build:
 	mkdir -p build
 
