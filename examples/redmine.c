@@ -740,6 +740,148 @@ static McpTool tool_get_issue = {
     },
 };
 
+static McpToolCallResult* list_issues_handler(cJSON* params)
+{
+    McpToolCallResult* r = mcp_tool_call_result_create();
+    if (!r)
+        return NULL;
+
+    int limit = 25;
+    cJSON* limit_json = cJSON_Select(params, ".limit:n");
+    if (limit_json) {
+        limit = limit_json->valueint;
+        if (limit < 1) limit = 25;
+    }
+
+    int offset = 0;
+    cJSON* offset_json = cJSON_Select(params, ".offset:n");
+    if (offset_json) {
+        offset = offset_json->valueint;
+        if (offset < 0) offset = 0;
+    }
+
+    char query[512] = "";
+    size_t query_len = 0;
+
+    cJSON* project_id_json = cJSON_Select(params, ".project_id:n");
+    if (project_id_json) {
+        query_len += snprintf(query + query_len, sizeof(query) - query_len,
+            "project_id=%d&", project_id_json->valueint);
+    }
+
+    cJSON* status_id_json = cJSON_Select(params, ".status_id:n");
+    if (status_id_json) {
+        query_len += snprintf(query + query_len, sizeof(query) - query_len,
+            "status_id=%d&", status_id_json->valueint);
+    }
+
+    cJSON* assigned_to_id_json = cJSON_Select(params, ".assigned_to_id:n");
+    if (assigned_to_id_json) {
+        query_len += snprintf(query + query_len, sizeof(query) - query_len,
+            "assigned_to_id=%d&", assigned_to_id_json->valueint);
+    }
+
+    cJSON* tracker_id_json = cJSON_Select(params, ".tracker_id:n");
+    if (tracker_id_json) {
+        query_len += snprintf(query + query_len, sizeof(query) - query_len,
+            "tracker_id=%d&", tracker_id_json->valueint);
+    }
+
+    char path[512];
+    snprintf(path, sizeof(path), "issues.json?%slimit=%d&offset=%d&sort=updated_on:desc",
+        query, limit, offset);
+
+    cJSON* json = redmine_get(path);
+    if (!json) {
+        mcp_tool_call_result_set_error(r);
+        mcp_tool_call_result_add_text(r, "Failed to fetch issues from Redmine");
+        return r;
+    }
+
+    cJSON* total_count = cJSON_Select(json, ".total_count:n");
+    if (total_count)
+        mcp_tool_call_result_add_textf(r, "Total: %d\n", total_count->valueint);
+
+    cJSON* off = cJSON_Select(json, ".offset:n");
+    if (off)
+        mcp_tool_call_result_add_textf(r, "Offset: %d\n", off->valueint);
+
+    mcp_tool_call_result_add_text(r, "\n");
+
+    cJSON* issues = cJSON_Select(json, ".issues:a");
+    if (!issues) {
+        cJSON_Delete(json);
+        mcp_tool_call_result_set_error(r);
+        mcp_tool_call_result_add_text(r, "No issues found");
+        return r;
+    }
+
+    cJSON* issue = NULL;
+    cJSON_ArrayForEach(issue, issues) {
+        cJSON* id = cJSON_Select(issue, ".id:n");
+        cJSON* subject = cJSON_Select(issue, ".subject:s");
+        cJSON* status = cJSON_Select(issue, ".status.name:s");
+        cJSON* priority = cJSON_Select(issue, ".priority.name:s");
+        cJSON* assigned_to = cJSON_Select(issue, ".assigned_to.name:s");
+        cJSON* project = cJSON_Select(issue, ".project.name:s");
+        cJSON* updated_on = cJSON_Select(issue, ".updated_on:s");
+
+        mcp_tool_call_result_add_textf(r, "#%d: %s\n", id ? id->valueint : 0, subject ? subject->valuestring : "N/A");
+        if (project)
+            mcp_tool_call_result_add_textf(r, "  Project: %s\n", project->valuestring);
+        if (status)
+            mcp_tool_call_result_add_textf(r, "  Status: %s\n", status->valuestring);
+        if (priority)
+            mcp_tool_call_result_add_textf(r, "  Priority: %s\n", priority->valuestring);
+        if (assigned_to)
+            mcp_tool_call_result_add_textf(r, "  Assigned to: %s\n", assigned_to->valuestring);
+        if (updated_on)
+            mcp_tool_call_result_add_textf(r, "  Updated: %s\n", updated_on->valuestring);
+        mcp_tool_call_result_add_text(r, "\n");
+    }
+
+    cJSON_Delete(json);
+    return r;
+}
+
+static McpInputSchema tool_list_issues_schema[] = {
+    { .name = "project_id",
+      .description = "Filter by project ID (optional)",
+      .type = MCP_INPUT_SCHEMA_TYPE_NUMBER,
+    },
+    { .name = "status_id",
+      .description = "Filter by status ID (optional)",
+      .type = MCP_INPUT_SCHEMA_TYPE_NUMBER,
+    },
+    { .name = "assigned_to_id",
+      .description = "Filter by assigned user ID (optional)",
+      .type = MCP_INPUT_SCHEMA_TYPE_NUMBER,
+    },
+    { .name = "tracker_id",
+      .description = "Filter by tracker ID (optional)",
+      .type = MCP_INPUT_SCHEMA_TYPE_NUMBER,
+    },
+    { .name = "limit",
+      .description = "Maximum number of results to return (optional, default: 25)",
+      .type = MCP_INPUT_SCHEMA_TYPE_NUMBER,
+    },
+    { .name = "offset",
+      .description = "Skip this number of results for pagination (optional, default: 0)",
+      .type = MCP_INPUT_SCHEMA_TYPE_NUMBER,
+    },
+    mcp_input_schema_null
+};
+
+static McpTool tool_list_issues = {
+    .name = "list_issues",
+    .description = "List issues from Redmine with optional filters",
+    .handler = list_issues_handler,
+    .input_schema = {
+        .type = MCP_INPUT_SCHEMA_TYPE_OBJECT,
+        .properties = tool_list_issues_schema,
+    },
+};
+
 int main(int argc, const char* argv[])
 {
     curl_global_init(CURL_GLOBAL_DEFAULT);
