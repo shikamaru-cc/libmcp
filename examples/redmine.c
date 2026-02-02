@@ -21,6 +21,56 @@ static size_t write_callback(void* contents, size_t size, size_t nmemb, void* us
     return realsize;
 }
 
+static cJSON* redmine_post(const char* path, const char* data)
+{
+    CURL* curl = NULL;
+    struct curl_slist* headers = NULL;
+    char* response = NULL;
+
+    while (path && *path == '/') path++;
+    char url[512];
+    snprintf(url, sizeof(url), "%s/%s", redmine_base_url, path);
+
+    char auth_header[256];
+    snprintf(auth_header, sizeof(auth_header), "X-Redmine-API-Key: %s", redmine_api_key);
+
+    curl = curl_easy_init();
+    if (curl == NULL)
+        goto fail;
+
+    headers = curl_slist_append(NULL, auth_header);
+    headers = curl_slist_append(headers, "Content-Type: application/json");
+    if (headers == NULL)
+        goto fail;
+
+    response = strdup("");
+    if (response == NULL)
+        goto fail;
+
+    curl_easy_setopt(curl, CURLOPT_URL, url);
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
+    curl_easy_setopt(curl, CURLOPT_POST, 1L);
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, data);
+
+    CURLcode res = curl_easy_perform(curl);
+    if (res != CURLE_OK)
+        goto fail;
+
+    cJSON* json = cJSON_Parse(response);
+    curl_easy_cleanup(curl);
+    curl_slist_free_all(headers);
+    free(response);
+    return json;
+
+fail:
+    if (curl) curl_easy_cleanup(curl);
+    if (headers) curl_slist_free_all(headers);
+    if (response) free(response);
+    return NULL;
+}
+
 typedef struct {
     int id;
     char* name;
@@ -879,6 +929,75 @@ static McpTool tool_list_issues = {
     .input_schema = {
         .type = MCP_INPUT_SCHEMA_TYPE_OBJECT,
         .properties = tool_list_issues_schema,
+    },
+};
+
+static McpToolCallResult* add_issue_note_handler(cJSON* params)
+{
+    McpToolCallResult* r = mcp_tool_call_result_create();
+    if (!r)
+        return NULL;
+
+    cJSON* issue_id_json = cJSON_Select(params, ".issue_id:n");
+    if (!issue_id_json) {
+        mcp_tool_call_result_set_error(r);
+        mcp_tool_call_result_add_text(r, "issue_id parameter is required");
+        return r;
+    }
+
+    cJSON* notes_json = cJSON_Select(params, ".notes:s");
+    if (!notes_json) {
+        mcp_tool_call_result_set_error(r);
+        mcp_tool_call_result_add_text(r, "notes parameter is required");
+        return r;
+    }
+
+    int issue_id = issue_id_json->valueint;
+    const char* notes = notes_json->valuestring;
+
+    cJSON* issue_obj = cJSON_CreateObject();
+    cJSON* notes_obj = cJSON_CreateString(notes);
+    cJSON_AddItemToObject(issue_obj, "notes", notes_obj);
+
+    char* data = cJSON_PrintUnformatted(issue_obj);
+    cJSON_Delete(issue_obj);
+
+    char path[128];
+    snprintf(path, sizeof(path), "issues/%d.json", issue_id);
+
+    cJSON* json = redmine_post(path, data);
+    free(data);
+
+    if (!json) {
+        mcp_tool_call_result_set_error(r);
+        mcp_tool_call_result_add_text(r, "Failed to add note to issue");
+        return r;
+    }
+
+    mcp_tool_call_result_add_textf(r, "Note added to issue #%d\n", issue_id);
+    cJSON_Delete(json);
+    return r;
+}
+
+static McpInputSchema tool_add_issue_note_schema[] = {
+    { .name = "issue_id",
+      .description = "Issue ID to add note to",
+      .type = MCP_INPUT_SCHEMA_TYPE_NUMBER,
+    },
+    { .name = "notes",
+      .description = "Note text to add",
+      .type = MCP_INPUT_SCHEMA_TYPE_STRING,
+    },
+    mcp_input_schema_null
+};
+
+static McpTool tool_add_issue_note = {
+    .name = "add_issue_note",
+    .description = "Add a note/comment to an existing issue",
+    .handler = add_issue_note_handler,
+    .input_schema = {
+        .type = MCP_INPUT_SCHEMA_TYPE_OBJECT,
+        .properties = tool_add_issue_note_schema,
     },
 };
 
