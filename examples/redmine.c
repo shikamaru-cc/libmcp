@@ -696,7 +696,7 @@ static McpToolCallResult* get_issue_handler(cJSON* params)
 
     int issue_id = issue_id_json->valueint;
     char path[128];
-    snprintf(path, sizeof(path), "issues/%d.json", issue_id);
+    snprintf(path, sizeof(path), "issues/%d.json?include=journals", issue_id);
 
     cJSON* json = redmine_get(path);
     if (!json) {
@@ -751,96 +751,42 @@ static McpToolCallResult* get_issue_handler(cJSON* params)
 
     cJSON* journals = cJSON_Select(issue, ".journals:a");
     if (journals && cJSON_GetArraySize(journals) > 0) {
-        mcp_tool_call_result_add_text(r, "\n====================\n");
         mcp_tool_call_result_add_text(r, "Discussion History:\n");
-        mcp_tool_call_result_add_text(r, "====================\n\n");
-        
+
         cJSON* journal = NULL;
         cJSON_ArrayForEach(journal, journals) {
             cJSON* user = cJSON_Select(journal, ".user.name:s");
             cJSON* notes = cJSON_Select(journal, ".notes:s");
-            cJSON* created_on_j = cJSON_Select(journal, ".created_on:s");
-            cJSON* details = cJSON_Select(journal, ".details:a");
-            
-            if (created_on_j) {
-                char date[20];
-                strncpy(date, created_on_j->valuestring, 19);
-                date[19] = '\0';
-                mcp_tool_call_result_add_textf(r, "[%s]\n", date);
-            }
-            
-            if (user)
-                mcp_tool_call_result_add_textf(r, "By: %s\n", user->valuestring);
-            
-            if (details && cJSON_GetArraySize(details) > 0) {
-                mcp_tool_call_result_add_text(r, "Changes:\n");
-                cJSON* detail = NULL;
-                cJSON_ArrayForEach(detail, details) {
-                    cJSON* name = cJSON_Select(detail, ".name:s");
-                    cJSON* old_value = cJSON_Select(detail, ".old_value:s");
-                    cJSON* new_value = cJSON_Select(detail, ".new_value:s");
-                    
-                    if (name) {
-                        if (strcmp(name->valuestring, "status_id") == 0) {
-                            mcp_tool_call_result_add_textf(r, "  - Status: %s -> %s\n",
-                                old_value ? redmine_status_id_to_name(atoi(old_value->valuestring)) : "N/A",
-                                new_value ? redmine_status_id_to_name(atoi(new_value->valuestring)) : "N/A");
-                        } else if (strcmp(name->valuestring, "priority_id") == 0) {
-                            mcp_tool_call_result_add_textf(r, "  - Priority changed\n");
-                        } else if (strcmp(name->valuestring, "assigned_to_id") == 0) {
-                            mcp_tool_call_result_add_textf(r, "  - Assignment changed\n");
-                        } else if (strcmp(name->valuestring, "done_ratio") == 0) {
-                            mcp_tool_call_result_add_textf(r, "  - Done: %s%% -> %s%%\n",
-                                old_value ? old_value->valuestring : "0",
-                                new_value ? new_value->valuestring : "0");
-                        } else if (strcmp(name->valuestring, "fixed_version_id") == 0) {
-                            mcp_tool_call_result_add_textf(r, "  - Target Version: %s -> %s\n",
-                                old_value ? redmine_version_id_to_name(atoi(old_value->valuestring)) : "N/A",
-                                new_value ? redmine_version_id_to_name(atoi(new_value->valuestring)) : "N/A");
-                        } else if (strcmp(name->valuestring, "description") != 0) {
-                            mcp_tool_call_result_add_textf(r, "  - %s: %s -> %s\n",
-                                name->valuestring,
-                                old_value ? old_value->valuestring : "N/A",
-                                new_value ? new_value->valuestring : "N/A");
-                        }
-                    }
-                }
-            }
-            
-            if (notes && strlen(notes->valuestring) > 0) {
-                mcp_tool_call_result_add_text(r, "Comment:\n");
-                mcp_tool_call_result_add_textf(r, "%s\n", notes->valuestring);
-            }
-            
-            mcp_tool_call_result_add_text(r, "\n");
+            if (user && notes && strlen(notes->valuestring) > 0)
+                mcp_tool_call_result_add_textf(r, "%s comment: %s", user->valuestring, notes->valuestring);
         }
     }
-    
-    cJSON* attachments = cJSON_Select(issue, ".attachments:a");
-    if (attachments && cJSON_GetArraySize(attachments) > 0) {
-        mcp_tool_call_result_add_text(r, "Attachments:\n");
-        cJSON* attachment = NULL;
-        cJSON_ArrayForEach(attachment, attachments) {
-            cJSON* filename = cJSON_Select(attachment, ".filename:s");
-            cJSON* filesize = cJSON_Select(attachment, ".filesize:n");
-            cJSON* content_url = cJSON_Select(attachment, ".content_url:s");
-            cJSON* author = cJSON_Select(attachment, ".author.name:s");
-            cJSON* created_on = cJSON_Select(attachment, ".created_on:s");
-            
-            if (filename)
-                mcp_tool_call_result_add_textf(r, "  - %s", filename->valuestring);
-            if (filesize)
-                mcp_tool_call_result_add_textf(r, " (%d bytes)", filesize->valueint);
-            mcp_tool_call_result_add_text(r, "\n");
-            if (author)
-                mcp_tool_call_result_add_textf(r, "    Uploaded by: %s\n", author->valuestring);
-            if (created_on)
-                mcp_tool_call_result_add_textf(r, "    Date: %s\n", created_on->valuestring);
-            if (content_url)
-                mcp_tool_call_result_add_textf(r, "    URL: %s\n", content_url->valuestring);
-        }
-        mcp_tool_call_result_add_text(r, "\n");
-    }
+
+    /* cJSON* attachments = cJSON_Select(issue, ".attachments:a"); */
+    /* if (attachments && cJSON_GetArraySize(attachments) > 0) { */
+    /*     mcp_tool_call_result_add_text(r, "Attachments:\n"); */
+    /*     cJSON* attachment = NULL; */
+    /*     cJSON_ArrayForEach(attachment, attachments) { */
+    /*         cJSON* filename = cJSON_Select(attachment, ".filename:s"); */
+    /*         cJSON* filesize = cJSON_Select(attachment, ".filesize:n"); */
+    /*         cJSON* content_url = cJSON_Select(attachment, ".content_url:s"); */
+    /*         cJSON* author = cJSON_Select(attachment, ".author.name:s"); */
+    /*         cJSON* created_on = cJSON_Select(attachment, ".created_on:s"); */
+
+    /*         if (filename) */
+    /*             mcp_tool_call_result_add_textf(r, "  - %s", filename->valuestring); */
+    /*         if (filesize) */
+    /*             mcp_tool_call_result_add_textf(r, " (%d bytes)", filesize->valueint); */
+    /*         mcp_tool_call_result_add_text(r, "\n"); */
+    /*         if (author) */
+    /*             mcp_tool_call_result_add_textf(r, "    Uploaded by: %s\n", author->valuestring); */
+    /*         if (created_on) */
+    /*             mcp_tool_call_result_add_textf(r, "    Date: %s\n", created_on->valuestring); */
+    /*         if (content_url) */
+    /*             mcp_tool_call_result_add_textf(r, "    URL: %s\n", content_url->valuestring); */
+    /*     } */
+    /*     mcp_tool_call_result_add_text(r, "\n"); */
+    /* } */
 
     cJSON_Delete(json);
     return r;
