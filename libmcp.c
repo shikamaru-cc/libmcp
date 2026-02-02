@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 #define _GNU_SOURCE
 #include "libmcp.h"
+#include <assert.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -12,14 +13,13 @@
 #define MCP_MAX_PROMPTS 128
 #define MCP_BUFFER_SIZE 8192
 
-
 struct McpServer {
     char* name;
     char* version;
     int tool_count;
     int running;
 
-    mcp_tool_t tools[MCP_MAX_TOOLS];
+    McpTool tools[MCP_MAX_TOOLS];
 };
 
 struct McpConnection {
@@ -134,19 +134,10 @@ int mcp_server_set_version(McpServer* server, const char* version)
     return MCP_ERROR_NONE;
 }
 
-void mcp_server_register_tool(McpServer* server, const mcp_tool_t* tool)
+void mcp_server_register_tool(McpServer* server, const McpTool* tool)
 {
-    if (!server || !tool || !tool->name || !tool->handler) {
-        fprintf(stderr, "mcp_server_register_tool: invalid argument\n");
-        return;
-    }
-
-    if (server->tool_count >= MCP_MAX_TOOLS) {
-        fprintf(stderr, "mcp_server_register_tool: max tools reached\n");
-        return;
-    }
-
-    /* copy tool by value into server registry */
+    assert(tool);
+    assert(server->tool_count < MCP_MAX_TOOLS);
     server->tools[server->tool_count] = *tool;
     server->tool_count++;
 }
@@ -271,45 +262,38 @@ static cJSON* handle_tools_call(McpServer* server, cJSON* params)
 {
     cJSON* name = cJSON_GetObjectItem(params, "name");
     cJSON* args = cJSON_GetObjectItem(params, "arguments");
-
-    if (!name || !cJSON_IsString(name)) {
+    if (!name || !cJSON_IsString(name))
         return NULL;
-    }
 
     for (int i = 0; i < server->tool_count; i++) {
-        if (strcmp(server->tools[i].name, name->valuestring) == 0) {
-            McpContentArray* contents = mcp_content_array_create();
-            if (!contents) return NULL;
+        if (strcmp(server->tools[i].name, name->valuestring) != 0)
+            continue;
 
-            int err = server->tools[i].handler(args, contents);
-            if (err != MCP_ERROR_NONE || contents->count == 0) {
-                mcp_content_array_free(contents);
-                return NULL;
+        McpToolCallResult* result = server->tools[i].handler(args);
+        if (!result)
+            return NULL;
+
+        cJSON* result_obj = cJSON_CreateObject();
+        cJSON* content = cJSON_AddArrayToObject(result_obj, "content");
+
+        McpContentItem* it;
+        for (it = result->head; it != NULL; it = it->next) {
+            cJSON* content_obj = cJSON_CreateObject();
+            if (it->type == MCP_CONTENT_TYPE_TEXT) {
+                cJSON_AddStringToObject(content_obj, "type", "text");
+                cJSON_AddStringToObject(content_obj, "text", it->text ? it->text : "");
+            } else if (it->type == MCP_CONTENT_TYPE_IMAGE) {
+                cJSON_AddStringToObject(content_obj, "type", "image");
+                cJSON_AddStringToObject(content_obj, "data", it->data ? it->data : "");
+                cJSON_AddStringToObject(content_obj, "mimeType", it->mime_type ? it->mime_type : "");
+            } else {
+                cJSON_AddStringToObject(content_obj, "type", "unknown");
             }
-
-            cJSON* result = cJSON_CreateObject();
-            cJSON* content = cJSON_CreateArray();
-            cJSON_AddItemToObject(result, "content", content);
-
-            for (int j = 0; j < contents->count; j++) {
-                McpContentItem* it = &contents->items[j];
-                cJSON* content_obj = cJSON_CreateObject();
-                if (it->type == MCP_CONTENT_TYPE_TEXT) {
-                    cJSON_AddStringToObject(content_obj, "type", "text");
-                    cJSON_AddStringToObject(content_obj, "text", it->text ? it->text : "");
-                } else if (it->type == MCP_CONTENT_TYPE_IMAGE) {
-                    cJSON_AddStringToObject(content_obj, "type", "image");
-                    cJSON_AddStringToObject(content_obj, "data", it->data ? it->data : "");
-                    cJSON_AddStringToObject(content_obj, "mimeType", it->mime_type ? it->mime_type : "");
-                } else {
-                    cJSON_AddStringToObject(content_obj, "type", "unknown");
-                }
-                cJSON_AddItemToArray(content, content_obj);
-            }
-
-            mcp_content_array_free(contents);
-            return result;
+            cJSON_AddItemToArray(content, content_obj);
         }
+
+        mcp_tool_call_result_delete(result);
+        return result_obj;
     }
 
     return NULL;
@@ -338,9 +322,8 @@ static cJSON* handle_prompts_get(McpServer* server, cJSON* params)
 static int process_message(McpServer* server, const char* json_str, char** response)
 {
     cJSON* request = cJSON_Parse(json_str);
-    if (!request) {
+    if (!request)
         return MCP_ERROR_PROTOCOL;
-    }
 
     cJSON* id = cJSON_GetObjectItem(request, "id");
     cJSON* method = cJSON_GetObjectItem(request, "method");
@@ -440,96 +423,86 @@ int mcp_server_serve_stdio(McpServer* server)
     return MCP_ERROR_NONE;
 }
 
-/* Content array implementation */
-McpContentArray* mcp_content_array_create(void)
+McpToolCallResult* mcp_tool_call_result_create()
 {
-    McpContentArray* array = malloc(sizeof(McpContentArray));
-    if (!array) return NULL;
-    array->count = 0;
-    array->capacity = 4;
-    array->items = calloc(array->capacity, sizeof(McpContentItem));
-    if (!array->items) {
-        free(array);
+    McpToolCallResult* r = malloc(sizeof(McpToolCallResult));
+    if (r == NULL)
         return NULL;
-    }
-    return array;
+
+    r->is_error = false;
+    r->head = NULL;
+    r->tail = NULL;
+    return r;
 }
 
-void mcp_content_array_free(McpContentArray* array)
+static void mcp_tool_call_result_add_content(McpToolCallResult* r, McpContentItem* i)
 {
-    if (!array) return;
-    for (int i = 0; i < array->count; i++) {
-        free(array->items[i].text);
-        free(array->items[i].data);
-        free(array->items[i].mime_type);
-    }
-    free(array->items);
-    free(array);
+    i->next = NULL;
+
+    if (r->head == NULL)
+        r->head = i;
+
+    if (r->tail == NULL)
+        r->tail = i;
+    else
+        r->tail->next = i;
 }
 
-static int mcp_content_array_ensure(McpContentArray* array)
+static void mcp_content_item_delete(McpContentItem* i)
 {
-    if (array->count < array->capacity) return MCP_ERROR_NONE;
-    int newcap = array->capacity * 2;
-    McpContentItem* n = realloc(array->items, newcap * sizeof(McpContentItem));
-    if (!n) return MCP_ERROR_OUT_OF_MEMORY;
-    array->items = n;
-    array->capacity = newcap;
-    return MCP_ERROR_NONE;
+    if (i == NULL) return;
+    mcp_content_item_delete(i->next);
+    free(i);
 }
 
-int mcp_content_add_text(McpContentArray* array, const char* text)
+void mcp_tool_call_result_delete(McpToolCallResult* r)
 {
-    if (!array || !text) {
-        return MCP_ERROR_INVALID_ARGUMENT;
-    }
-    int err = mcp_content_array_ensure(array);
-    if (err != MCP_ERROR_NONE) { return err; }
-    McpContentItem* it = &array->items[array->count++];
-    it->type = MCP_CONTENT_TYPE_TEXT;
-    it->text = strdup(text);
-    it->data = NULL;
-    it->mime_type = NULL;
-    if (!it->text) {
-        array->count--;
-        return MCP_ERROR_OUT_OF_MEMORY;
-    }
-    return MCP_ERROR_NONE;
+    if (r == NULL) return;
+    mcp_content_item_delete(r->head);
+    free(r);
 }
 
-int mcp_content_add_textf(McpContentArray* array, const char* fmt, ...)
+bool mcp_tool_call_result_add_text(McpToolCallResult* r, const char* text)
 {
-    if (!array || !fmt) return MCP_ERROR_INVALID_ARGUMENT;
+    McpContentItem* i = (McpContentItem*)malloc(sizeof(McpContentItem));
+    if (i == NULL)
+        return false;
+
+    i->type = MCP_CONTENT_TYPE_TEXT;
+    i->text = strdup(text);
+    i->data = NULL;
+    i->mime_type = NULL;
+
+    mcp_tool_call_result_add_content(r, i);
+    return true;
+}
+
+bool mcp_tool_call_result_add_textf(McpToolCallResult* r, const char* fmt, ...)
+{
     va_list ap;
     va_start(ap, fmt);
     char* s = NULL;
     int len = vasprintf(&s, fmt, ap);
     va_end(ap);
-    if (len < 0 || !s) return MCP_ERROR_OUT_OF_MEMORY;
-    int err = mcp_content_add_text(array, s);
+    if (len < 0) return false;
+    bool rc = mcp_tool_call_result_add_text(r, s);
     free(s);
-    return err;
+    return rc;
 }
 
-int mcp_content_add_image(McpContentArray* array, const char* data, const char* mime_type)
+bool mcp_tool_call_result_add_image(McpToolCallResult* r, const char* data, const char* mime_type)
 {
-    if (!array || !data || !mime_type) {
-        return MCP_ERROR_INVALID_ARGUMENT;
-    }
-    int err = mcp_content_array_ensure(array);
-    if (err != MCP_ERROR_NONE) { return err; }
-    McpContentItem* it = &array->items[array->count++];
-    it->type = MCP_CONTENT_TYPE_IMAGE;
-    it->text = NULL;
-    it->data = strdup(data);
-    it->mime_type = strdup(mime_type);
-    if (!it->data || !it->mime_type) {
-        free(it->data);
-        free(it->mime_type);
-        array->count--;
-        return MCP_ERROR_OUT_OF_MEMORY;
-    }
-    return MCP_ERROR_NONE;
+    McpContentItem* i = (McpContentItem*)malloc(sizeof(McpContentItem));
+    if (i == NULL)
+        return false;
+
+    i->type = MCP_CONTENT_TYPE_IMAGE;
+    i->text = NULL;
+    i->data = strdup(data);
+    i->mime_type = strdup(mime_type);
+
+    mcp_tool_call_result_add_content(r, i);
+    return true;
 }
 
 int mcp_server_serve(McpServer* server, const char* address, int port)

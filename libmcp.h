@@ -45,49 +45,43 @@ typedef struct McpInputSchema {
 
 #define mcp_input_schema_null { .type = MCP_INPUT_SCHEMA_TYPE_NULL }
 
-/* Tool handler returns int error code and fills provided content array.
- * The handler must return MCP_ERROR_NONE on success. */
-typedef struct McpContentItem McpContentItem;
-typedef struct McpContentArray McpContentArray;
-
-typedef int (*mcp_tool_handler_t)(cJSON* params, McpContentArray* contents);
-
-typedef struct {
-    const char* name;
-    const char* description;
-    mcp_tool_handler_t handler;
-    McpInputSchema input_schema;
-} mcp_tool_t;
-
-/* Content API */
 typedef enum {
     MCP_CONTENT_TYPE_TEXT = 0,
     MCP_CONTENT_TYPE_IMAGE = 1,
     MCP_CONTENT_TYPE_RESOURCE = 2
-} mcp_content_type_t;
+} McpContentTypeEnum;
 
-struct McpContentItem {
-    mcp_content_type_t type;
-    char* text;      /* owned */
-    char* data;      /* owned: image data (base64) or resource */
-    char* mime_type; /* owned */
-};
+typedef struct McpContentItem {
+    McpContentTypeEnum type;
+    char* text;
+    char* data;
+    char* mime_type;
+    struct McpContentItem* next;
+} McpContentItem;
 
-struct McpContentArray {
-    McpContentItem* items;
-    int count;
-    int capacity;
-};
+typedef struct McpToolCallResult {
+    bool is_error;
+    McpContentItem* head;
+    McpContentItem* tail;
+} McpToolCallResult;
 
-/* Content array management */
-McpContentArray* mcp_content_array_create(void);
-void mcp_content_array_free(McpContentArray* array);
+typedef struct McpTool {
+    const char* name;
+    const char* description;
+    McpInputSchema input_schema;
+    McpToolCallResult* (*handler)(cJSON* params);
+} McpTool;
 
-/* Add content items - libmcp makes copies of provided strings. */
-int mcp_content_add_text(McpContentArray* array, const char* text);
-int mcp_content_add_textf(McpContentArray* array, const char* fmt, ...);
-int mcp_content_add_image(McpContentArray* array, const char* data, const char* mime_type);
+McpToolCallResult* mcp_tool_call_result_create();
+void mcp_tool_call_result_delete(McpToolCallResult*);
+bool mcp_tool_call_result_add_text(McpToolCallResult*, const char* text);
+bool mcp_tool_call_result_add_textf(McpToolCallResult*, const char* fmt, ...);
+bool mcp_tool_call_result_add_image(McpToolCallResult*, const char* data, const char* mime_type);
 
+static inline void mcp_tool_call_result_set_error(McpToolCallResult* r)
+{
+    r->is_error = true;
+}
 
 /* Server lifecycle and registration */
 McpServer* mcp_server_create(void);
@@ -95,7 +89,7 @@ McpServer* mcp_server_create(void);
 void mcp_server_destroy(McpServer* server);
 int mcp_server_set_name(McpServer* server, const char* name);
 int mcp_server_set_version(McpServer* server, const char* version);
-void mcp_server_register_tool(McpServer* server, const mcp_tool_t* tool);
+void mcp_server_register_tool(McpServer* server, const McpTool* tool);
 
 int mcp_server_serve(McpServer* server, const char* address, int port);
 

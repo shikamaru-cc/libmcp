@@ -74,22 +74,25 @@ fail:
     return NULL;
 }
 
-static int list_projects_handler(cJSON* params, McpContentArray* contents)
+static McpToolCallResult* list_projects_handler(cJSON* params)
 {
     (void)params;
 
+    McpToolCallResult* r = mcp_tool_call_result_create();
+    if (!r)
+        return NULL;
+
     cJSON* json = redmine_get("projects.json");
     if (!json) {
-        return mcp_content_add_text(contents, "Error: Failed to fetch projects from Redmine");
+        mcp_tool_call_result_add_text(r, "Failed to fetch projects from Redmine");
+        goto fail;
     }
 
-    cJSON* projects = cJSON_Select(json, ".projects");
-    if (!projects || !cJSON_IsArray(projects)) {
-        cJSON_Delete(json);
-        return mcp_content_add_text(contents, "Error: No projects found in response");
+    cJSON* projects = cJSON_Select(json, ".projects:a");
+    if (!projects) {
+        mcp_tool_call_result_add_text(r, "No projects found in response");
+        goto fail;
     }
-
-    mcp_content_add_text(contents, "Projects:\n");
 
     cJSON* project = NULL;
     cJSON_ArrayForEach(project, projects) {
@@ -97,18 +100,21 @@ static int list_projects_handler(cJSON* params, McpContentArray* contents)
         cJSON* name = cJSON_Select(project, ".name:s");
         cJSON* identifier = cJSON_Select(project, ".identifier:s");
         cJSON* description = cJSON_Select(project, ".description:s");
+        if (!id || !name || !identifier || !description)
+            continue;
 
-        mcp_content_add_textf(contents, "\n  ID: %d\n", id ? id->valueint : 0);
-        mcp_content_add_textf(contents, "  Name: %s\n", name ? name->valuestring : "N/A");
-        mcp_content_add_textf(contents, "  Identifier: %s\n", identifier ? identifier->valuestring : "N/A");
-        if (description && strlen(description->valuestring) > 0) {
-            mcp_content_add_textf(contents, "  Description: %s\n", description->valuestring);
-        }
+        mcp_tool_call_result_add_textf(r,
+            "ID: %d\nName: %s\nIdentifier: %s\nDescription: %s\n",
+            id, name, identifier, description);
     }
 
     cJSON_Delete(json);
+    return r;
 
-    return MCP_ERROR_NONE;
+fail:
+    mcp_tool_call_result_set_error(r);
+    if (json) cJSON_Delete(json);
+    return r;
 }
 
 static int activity_compare_by_created_on(const void* a, const void* b)
@@ -120,10 +126,13 @@ static int activity_compare_by_created_on(const void* a, const void* b)
     return strcmp(time_a->valuestring, time_b->valuestring);
 }
 
-static int list_activities_handler(cJSON* params, McpContentArray* contents)
+static McpToolCallResult* list_activities_handler(cJSON* params)
 {
-    const char* user_id_str = getenv("REDMINE_USER_ID");
+    McpToolCallResult* r = mcp_tool_call_result_create();
+    if (!r)
+        return NULL;
 
+    const char* user_id_str = getenv("REDMINE_USER_ID");
     cJSON* user_id_json = cJSON_GetObjectItem(params, "user_id");
     int user_id = user_id_json && cJSON_IsNumber(user_id_json) ? user_id_json->valueint : -1;
     if (user_id == -1 && user_id_str) {
@@ -131,7 +140,9 @@ static int list_activities_handler(cJSON* params, McpContentArray* contents)
     }
 
     if (user_id == -1) {
-        return mcp_content_add_text(contents, "Error: user_id parameter or REDMINE_USER_ID environment variable not set");
+        mcp_tool_call_result_set_error(r);
+        mcp_tool_call_result_add_text(r, "user_id parameter or REDMINE_USER_ID environment variable not set");
+        return r;
     }
 
     /* prepare start date */
@@ -157,46 +168,38 @@ static int list_activities_handler(cJSON* params, McpContentArray* contents)
 
     char issues_path[256];
     snprintf(issues_path, sizeof(issues_path), "issues.json?assigned_to_id=%d&updated_on=%s&status_id=*&sort=updated_on:desc", user_id, updated_on_escape);
-
     curl_free(updated_on_escape);
 
     cJSON* issues_json = redmine_get(issues_path);
     if (!issues_json) {
-        return mcp_content_add_text(contents, "Error: Failed to fetch issues from Redmine");
+        mcp_tool_call_result_set_error(r);
+        mcp_tool_call_result_add_text(r, "Failed to fetch issues from Redmine");
+        return r;
     }
 
     cJSON* issues = cJSON_Select(issues_json, ".issues:a");
     if (!issues) {
         cJSON_Delete(issues_json);
-        return mcp_content_add_text(contents, "Error: No issues found in response");
+        mcp_tool_call_result_set_error(r);
+        mcp_tool_call_result_add_text(r, "No issues found in response");
+        return r;
     }
 
     cJSON** activities = NULL;
-
     cJSON* issue = NULL;
     cJSON_ArrayForEach(issue, issues) {
         cJSON* id = cJSON_Select(issue, ".id:n");
-        if (!id) {
-            continue;
-        }
-
         cJSON* subject = cJSON_Select(issue, ".subject:s");
-        if (!subject) {
-            continue;
-        }
+        if (!id || !subject) continue;
 
         int issue_id = id->valueint;
-
         char detail_path[256];
         snprintf(detail_path, sizeof(detail_path), "issues/%d.json?include=journals", issue_id);
-
         cJSON* detail_json = redmine_get(detail_path);
-        if (!detail_json) {
-            continue;
-        }
+        if (!detail_json) continue;
 
-        cJSON* journal = NULL;
         cJSON* journals = cJSON_Select(detail_json, ".issue.journals:a");
+        cJSON* journal = NULL;
         cJSON_ArrayForEach(journal, journals) {
             cJSON* journal_user_id = cJSON_Select(journal, ".user.id:n");
             cJSON* created_on = cJSON_Select(journal, ".created_on:s");
@@ -222,10 +225,10 @@ static int list_activities_handler(cJSON* params, McpContentArray* contents)
     cJSON_Delete(issues_json);
 
     if (stb_arr_len(activities) == 0) {
-        return mcp_content_add_text(contents, "No activities found in the specified period");
+        mcp_tool_call_result_set_error(r);
+        mcp_tool_call_result_add_text(r, "No activities found in the specified period");
+        return r;
     }
-
-    mcp_content_add_text(contents, "Activities:\n");
 
     qsort(activities, stb_arr_len(activities), sizeof(cJSON*), activity_compare_by_created_on);
 
@@ -244,7 +247,7 @@ static int list_activities_handler(cJSON* params, McpContentArray* contents)
             cJSON* detail = NULL;
             cJSON_ArrayForEach(detail, details) {
                 cJSON* name = cJSON_Select(detail, ".name:s");
-                mcp_content_add_textf(contents, "%s: %s (%d) modified %s\n", date, time_str, issue_id,
+                mcp_tool_call_result_add_textf(r, "%s: %s (%d) modified %s\n", date, time_str, issue_id,
                                      name ? name->valuestring : "unknown");
             }
         }
@@ -256,9 +259,9 @@ static int list_activities_handler(cJSON* params, McpContentArray* contents)
                 memcpy(short_notes, notes->valuestring, 30);
                 short_notes[30] = '\0';
                 strcpy(short_notes + 30, "...");
-                mcp_content_add_textf(contents, "%s: %s (%d) comment: %s\n", date, time_str, issue_id, short_notes);
+                mcp_tool_call_result_add_textf(r, "%s: %s (%d) comment: %s\n", date, time_str, issue_id, short_notes);
             } else {
-                mcp_content_add_textf(contents, "%s: %s (%d) comment: %s\n", date, time_str, issue_id, notes->valuestring);
+                mcp_tool_call_result_add_textf(r, "%s: %s (%d) comment: %s\n", date, time_str, issue_id, notes->valuestring);
             }
         }
     }
@@ -268,7 +271,7 @@ static int list_activities_handler(cJSON* params, McpContentArray* contents)
     }
     stb_arr_free(activities);
 
-    return MCP_ERROR_NONE;
+    return r;
 }
 
 static McpInputSchema tool_list_activities_schema[] = {
@@ -285,7 +288,7 @@ static McpInputSchema tool_list_activities_schema[] = {
     mcp_input_schema_null
 };
 
-static mcp_tool_t tool_list_activities = {
+static McpTool tool_list_activities = {
     .name = "list_activities",
     .description = "List activities (journals) from assigned issues for a user",
     .handler = list_activities_handler,
@@ -299,7 +302,7 @@ static McpInputSchema tool_list_projects_schema[] = {
     mcp_input_schema_null
 };
 
-static mcp_tool_t tool_list_projects = {
+static McpTool tool_list_projects = {
     .name = "list_projects",
     .description = "List all projects from Redmine",
     .handler = list_projects_handler,

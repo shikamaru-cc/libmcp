@@ -1,31 +1,43 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "../libmcp.h"
-#include "../cJSON.h"
+#include "libmcp.h"
+#include "cJSON.h"
 
-static int add_handler(cJSON* params, McpContentArray* contents)
+static McpToolCallResult* add_handler(cJSON* params)
 {
-    cJSON* a = cJSON_GetObjectItem(params, "a");
-    cJSON* b = cJSON_GetObjectItem(params, "b");
-    int ai = cJSON_IsNumber(a) ? a->valueint : 0;
-    int bi = cJSON_IsNumber(b) ? b->valueint : 0;
-    return mcp_content_add_textf(contents, "%d", ai + bi);
+    McpToolCallResult* r = mcp_tool_call_result_create();
+    cJSON* a = cJSON_GetObjectItem(params, "a:n");
+    cJSON* b = cJSON_GetObjectItem(params, "b:n");
+    if (!a || !b) {
+        mcp_tool_call_result_set_error(r);
+        mcp_tool_call_result_add_textf(r, "invalid params");
+        return r;
+    }
+    mcp_tool_call_result_add_textf(r, "%d", a->valueint + b->valueint);
+    return r;
 }
 
-static int multiply_handler(cJSON* params, McpContentArray* contents)
+static McpToolCallResult* multiply_handler(cJSON* params)
 {
-    cJSON* a = cJSON_GetObjectItem(params, "a");
-    cJSON* b = cJSON_GetObjectItem(params, "b");
-    int ai = cJSON_IsNumber(a) ? a->valueint : 0;
-    int bi = cJSON_IsNumber(b) ? b->valueint : 0;
-    return mcp_content_add_textf(contents, "%d", ai * bi);
+    McpToolCallResult* r = mcp_tool_call_result_create();
+    cJSON* a = cJSON_GetObjectItem(params, "a:n");
+    cJSON* b = cJSON_GetObjectItem(params, "b:n");
+    if (!a || !b) {
+        mcp_tool_call_result_set_error(r);
+        mcp_tool_call_result_add_textf(r, "invalid params");
+        return r;
+    }
+    mcp_tool_call_result_add_textf(r, "%d", a->valueint + b->valueint);
+    return r;
 }
 
-static int weather_handler(cJSON* params, McpContentArray* contents)
+static McpToolCallResult* weather_handler(cJSON* params)
 {
     (void)params;
-    return mcp_content_add_text(contents, "sunny day baby");
+    McpToolCallResult* r = mcp_tool_call_result_create();
+    mcp_tool_call_result_add_text(r, "sunny day baby");
+    return r;
 }
 
 static McpInputSchema tool_add_schema[] = {
@@ -38,7 +50,7 @@ static McpInputSchema tool_add_schema[] = {
     mcp_input_schema_null
 };
 
-static mcp_tool_t tool_add = {
+static McpTool tool_add = {
     .name = "add",
     .description = "Add two numbers",
     .handler = add_handler,
@@ -58,7 +70,7 @@ static McpInputSchema tool_multiply_schema[] = {
     mcp_input_schema_null
 };
 
-static mcp_tool_t tool_multiply = {
+static McpTool tool_multiply = {
     .name = "multiply",
     .description = "Multiply two numbers",
     .handler = multiply_handler,
@@ -72,7 +84,7 @@ static McpInputSchema tool_weather_schema[] = {
     mcp_input_schema_null
 };
 
-static mcp_tool_t tool_weather = {
+static McpTool tool_weather = {
     .name = "weather",
     .description = "Show today's weather",
     .handler = weather_handler,
