@@ -105,11 +105,25 @@ static void redmine_issue_statuses_init()
     cJSON_Delete(json);
 }
 
+static void redmine_user_id_init()
+{
+    cJSON* json = redmine_get("users/current.json");
+    if (!json)
+        return;
+
+    cJSON* user_id = cJSON_Select(json, ".user.id:n");
+    if (user_id) {
+        redmine_user_id = user_id->valueint;
+    }
+
+    cJSON_Delete(json);
+}
+
 static void redmine_issue_statuses_cleanup()
 {
     for (int i = 0; i < stb_arr_len(redmine_issue_statuses); i++)
         free(redmine_issue_statuses[i].name);
-    free(redmine_issue_statuses);
+    stb_arr_free(redmine_issue_statuses);
 }
 
 static const char* redmine_status_id_to_name(int id)
@@ -125,6 +139,7 @@ static void redmine_init()
 {
     redmine_base_url = getenv("REDMINE_URL");
     redmine_api_key = getenv("REDMINE_API_KEY");
+    redmine_user_id_init();
     redmine_issue_statuses_init();
 }
 
@@ -191,18 +206,8 @@ static McpToolCallResult* list_activities_handler(cJSON* params)
     if (!r)
         return NULL;
 
-    const char* user_id_str = getenv("REDMINE_USER_ID");
-    cJSON* user_id_json = cJSON_GetObjectItem(params, "user_id");
-    int user_id = user_id_json && cJSON_IsNumber(user_id_json) ? user_id_json->valueint : -1;
-    if (user_id == -1 && user_id_str) {
-        user_id = atoi(user_id_str);
-    }
-
-    if (user_id == -1) {
-        mcp_tool_call_result_set_error(r);
-        mcp_tool_call_result_add_text(r, "user_id parameter or REDMINE_USER_ID environment variable not set");
-        return r;
-    }
+    cJSON* user_id_param = cJSON_Select(params, ".user_id:n");
+    int user_id = user_id_param ? user_id_param->valueint : redmine_user_id;
 
     /* prepare start date */
 
