@@ -1439,6 +1439,107 @@ static McpTool tool_list_time_entries = {
     },
 };
 
+static McpToolCallResult* get_project_handler(cJSON* params)
+{
+    McpToolCallResult* r = mcp_tool_call_result_create();
+    if (!r)
+        return NULL;
+
+    cJSON* project_id_json = cJSON_Select(params, ".project_id:n");
+    if (!project_id_json) {
+        mcp_tool_call_result_set_error(r);
+        mcp_tool_call_result_add_text(r, "project_id parameter is required");
+        return r;
+    }
+
+    int project_id = project_id_json->valueint;
+    char path[128];
+    snprintf(path, sizeof(path), "projects/%d.json?include=trackers,issue_categories", project_id);
+
+    cJSON* json = redmine_get(path);
+    if (!json) {
+        mcp_tool_call_result_set_error(r);
+        mcp_tool_call_result_add_text(r, "Failed to fetch project from Redmine");
+        return r;
+    }
+
+    cJSON* project = cJSON_Select(json, ".project");
+    if (!project) {
+        cJSON_Delete(json);
+        mcp_tool_call_result_set_error(r);
+        mcp_tool_call_result_add_text(r, "Invalid project response");
+        return r;
+    }
+
+    cJSON* id = cJSON_Select(project, ".id:n");
+    cJSON* name = cJSON_Select(project, ".name:s");
+    cJSON* identifier = cJSON_Select(project, ".identifier:s");
+    cJSON* description = cJSON_Select(project, ".description:s");
+    cJSON* created_on = cJSON_Select(project, ".created_on:s");
+    cJSON* updated_on = cJSON_Select(project, ".updated_on:s");
+    cJSON* status = cJSON_Select(project, ".status:n");
+
+    if (id)
+        mcp_tool_call_result_add_textf(r, "ID: %d\n", id->valueint);
+    if (name)
+        mcp_tool_call_result_add_textf(r, "Name: %s\n", name->valuestring);
+    if (identifier)
+        mcp_tool_call_result_add_textf(r, "Identifier: %s\n", identifier->valuestring);
+    if (description)
+        mcp_tool_call_result_add_textf(r, "Description: %s\n", description->valuestring);
+    if (status)
+        mcp_tool_call_result_add_textf(r, "Status: %d\n", status->valueint);
+    if (created_on)
+        mcp_tool_call_result_add_textf(r, "Created: %s\n", created_on->valuestring);
+    if (updated_on)
+        mcp_tool_call_result_add_textf(r, "Updated: %s\n", updated_on->valuestring);
+
+    cJSON* trackers = cJSON_Select(project, ".trackers:a");
+    if (trackers && cJSON_GetArraySize(trackers) > 0) {
+        mcp_tool_call_result_add_text(r, "\nTrackers:\n");
+        cJSON* tracker = NULL;
+        cJSON_ArrayForEach(tracker, trackers) {
+            cJSON* tracker_id = cJSON_Select(tracker, ".id:n");
+            cJSON* tracker_name = cJSON_Select(tracker, ".name:s");
+            if (tracker_id && tracker_name)
+                mcp_tool_call_result_add_textf(r, "  - #%d: %s\n", tracker_id->valueint, tracker_name->valuestring);
+        }
+    }
+
+    cJSON* categories = cJSON_Select(project, ".issue_categories:a");
+    if (categories && cJSON_GetArraySize(categories) > 0) {
+        mcp_tool_call_result_add_text(r, "\nIssue Categories:\n");
+        cJSON* category = NULL;
+        cJSON_ArrayForEach(category, categories) {
+            cJSON* cat_id = cJSON_Select(category, ".id:n");
+            cJSON* cat_name = cJSON_Select(category, ".name:s");
+            if (cat_id && cat_name)
+                mcp_tool_call_result_add_textf(r, "  - #%d: %s\n", cat_id->valueint, cat_name->valuestring);
+        }
+    }
+
+    cJSON_Delete(json);
+    return r;
+}
+
+static McpInputSchema tool_get_project_schema[] = {
+    { .name = "project_id",
+      .description = "Project ID to fetch details for",
+      .type = MCP_INPUT_SCHEMA_TYPE_NUMBER,
+    },
+    mcp_input_schema_null
+};
+
+static McpTool tool_get_project = {
+    .name = "get_project",
+    .description = "Get detailed information about a specific project",
+    .handler = get_project_handler,
+    .input_schema = {
+        .type = MCP_INPUT_SCHEMA_TYPE_OBJECT,
+        .properties = tool_get_project_schema,
+    },
+};
+
 int main(int argc, const char* argv[])
 {
     curl_global_init(CURL_GLOBAL_DEFAULT);
