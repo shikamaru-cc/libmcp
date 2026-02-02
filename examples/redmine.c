@@ -1131,6 +1131,101 @@ static McpTool tool_create_issue = {
     },
 };
 
+static McpToolCallResult* get_wiki_page_handler(cJSON* params)
+{
+    McpToolCallResult* r = mcp_tool_call_result_create();
+    if (!r)
+        return NULL;
+
+    cJSON* project_json = cJSON_Select(params, ".project_identifier:s");
+    if (!project_json) {
+        mcp_tool_call_result_set_error(r);
+        mcp_tool_call_result_add_text(r, "project_identifier parameter is required");
+        return r;
+    }
+
+    cJSON* title_json = cJSON_Select(params, ".title:s");
+    if (!title_json) {
+        mcp_tool_call_result_set_error(r);
+        mcp_tool_call_result_add_text(r, "title parameter is required");
+        return r;
+    }
+
+    const char* project_identifier = project_json->valuestring;
+    const char* title = title_json->valuestring;
+
+    char* project_escaped = curl_easy_escape(NULL, project_identifier, 0);
+    char* title_escaped = curl_easy_escape(NULL, title, 0);
+
+    char path[512];
+    snprintf(path, sizeof(path), "projects/%s/wiki/%s.json", project_escaped, title_escaped);
+
+    curl_free(project_escaped);
+    curl_free(title_escaped);
+
+    cJSON* json = redmine_get(path);
+    if (!json) {
+        mcp_tool_call_result_set_error(r);
+        mcp_tool_call_result_add_text(r, "Failed to fetch wiki page from Redmine");
+        return r;
+    }
+
+    cJSON* wiki_page = cJSON_Select(json, ".wiki_page");
+    if (!wiki_page) {
+        cJSON_Delete(json);
+        mcp_tool_call_result_set_error(r);
+        mcp_tool_call_result_add_text(r, "Wiki page not found");
+        return r;
+    }
+
+    cJSON* title_r = cJSON_Select(wiki_page, ".title:s");
+    cJSON* text = cJSON_Select(wiki_page, ".text:s");
+    cJSON* author = cJSON_Select(wiki_page, ".author.name:s");
+    cJSON* created_on = cJSON_Select(wiki_page, ".created_on:s");
+    cJSON* updated_on = cJSON_Select(wiki_page, ".updated_on:s");
+    cJSON* version = cJSON_Select(wiki_page, ".version:n");
+
+    if (title_r)
+        mcp_tool_call_result_add_textf(r, "Title: %s\n", title_r->valuestring);
+    if (author)
+        mcp_tool_call_result_add_textf(r, "Author: %s\n", author->valuestring);
+    if (version)
+        mcp_tool_call_result_add_textf(r, "Version: %d\n", version->valueint);
+    if (created_on)
+        mcp_tool_call_result_add_textf(r, "Created: %s\n", created_on->valuestring);
+    if (updated_on)
+        mcp_tool_call_result_add_textf(r, "Updated: %s\n", updated_on->valuestring);
+    if (text) {
+        mcp_tool_call_result_add_text(r, "\nContent:\n");
+        mcp_tool_call_result_add_textf(r, "%s\n", text->valuestring);
+    }
+
+    cJSON_Delete(json);
+    return r;
+}
+
+static McpInputSchema tool_get_wiki_page_schema[] = {
+    { .name = "project_identifier",
+      .description = "Project identifier (e.g., 'my-project')",
+      .type = MCP_INPUT_SCHEMA_TYPE_STRING,
+    },
+    { .name = "title",
+      .description = "Wiki page title",
+      .type = MCP_INPUT_SCHEMA_TYPE_STRING,
+    },
+    mcp_input_schema_null
+};
+
+static McpTool tool_get_wiki_page = {
+    .name = "get_wiki_page",
+    .description = "Get a specific wiki page content from a project",
+    .handler = get_wiki_page_handler,
+    .input_schema = {
+        .type = MCP_INPUT_SCHEMA_TYPE_OBJECT,
+        .properties = tool_get_wiki_page_schema,
+    },
+};
+
 int main(int argc, const char* argv[])
 {
     curl_global_init(CURL_GLOBAL_DEFAULT);
