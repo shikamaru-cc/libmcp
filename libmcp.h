@@ -10,18 +10,6 @@
 extern "C" {
 #endif
 
-typedef int mcp_error_code_t;
-
-typedef enum {
-    MCP_ERROR_NONE = 0,
-    MCP_ERROR_INVALID_ARGUMENT = -1,
-    MCP_ERROR_OUT_OF_MEMORY = -2,
-    MCP_ERROR_NOT_FOUND = -3,
-    MCP_ERROR_PROTOCOL = -4,
-    MCP_ERROR_IO = -5,
-    MCP_ERROR_NOT_IMPLEMENTED = -6
-} mcp_error_t;
-
 typedef enum {
     MCP_INPUT_SCHEMA_TYPE_NULL   = 0,
     MCP_INPUT_SCHEMA_TYPE_NUMBER = 1 << 0,
@@ -29,13 +17,13 @@ typedef enum {
     MCP_INPUT_SCHEMA_TYPE_BOOL   = 1 << 2,
     MCP_INPUT_SCHEMA_TYPE_ARRAY  = 1 << 3,
     MCP_INPUT_SCHEMA_TYPE_OBJECT = 1 << 4,
-} mcp_input_schema_type_e;
+} McpInputSchemaTypeEnum;
 
 typedef struct McpInputSchema {
     const char* name;
     const char* description;
-    mcp_input_schema_type_e type;
-    mcp_input_schema_type_e type_arr; /* only make sense for type == array */
+    McpInputSchemaTypeEnum type;
+    McpInputSchemaTypeEnum type_arr; /* only make sense for type == array */
     struct McpInputSchema* properties;
     const char** required;
 } McpInputSchema;

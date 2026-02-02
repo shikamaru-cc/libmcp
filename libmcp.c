@@ -67,20 +67,6 @@ static void write_jsonrpc_message(FILE* out, cJSON* json)
     free(s);
 }
 
-const char* mcp_error_string(int code)
-{
-    switch (code) {
-        case MCP_ERROR_NONE: return "Success";
-        case MCP_ERROR_INVALID_ARGUMENT: return "Invalid argument";
-        case MCP_ERROR_OUT_OF_MEMORY: return "Out of memory";
-        case MCP_ERROR_NOT_FOUND: return "Not found";
-        case MCP_ERROR_PROTOCOL: return "Protocol error";
-        case MCP_ERROR_IO: return "I/O error";
-        case MCP_ERROR_NOT_IMPLEMENTED: return "Not implemented";
-        default: return "Unknown error";
-    }
-}
-
 void mcp_set_name(const char* name)
 {
     mcp_server_name = name;
@@ -132,7 +118,7 @@ static cJSON* jsonrpc_initialize(cJSON* params)
     return response;
 }
 
-static const char* schema_type_to_string(mcp_input_schema_type_e t)
+static const char* schema_type_to_string(McpInputSchemaTypeEnum t)
 {
     switch (t) {
         case MCP_INPUT_SCHEMA_TYPE_NUMBER: return "number";
