@@ -13,19 +13,26 @@
 #define MCP_MAX_PROMPTS 128
 #define MCP_BUFFER_SIZE 8192
 
-struct McpServer {
-    char* name;
-    char* version;
-    int tool_count;
-    int running;
+static const char* mcp_server_name = NULL;
+static const char* mcp_server_version = NULL;
+static McpTool mcp_server_tools[MCP_MAX_TOOLS];
 
-    McpTool tools[MCP_MAX_TOOLS];
-};
+static cJSON* jsonrpc_initialize(cJSON*);
+static cJSON* jsonrpc_tools_list(cJSON*);
+static cJSON* jsonrpc_tools_call(cJSON*);
+static cJSON* jsonrpc_notifications_initialized(cJSON*);
 
-struct McpConnection {
-    McpServer* server;
-    FILE* in;
-    FILE* out;
+typedef struct JsonrpcMethod {
+    const char* name;
+    cJSON* (*handler)(cJSON*);
+} JsonrpcMethod;
+
+static JsonrpcMethod jsonrpc_methods[] = {
+    { "initialize", jsonrpc_initialize },
+    { "tools/list", jsonrpc_tools_list },
+    { "tools/call", jsonrpc_tools_call },
+    { "notifications/initialized", jsonrpc_notifications_initialized },
+    { NULL, NULL },
 };
 
 static char* read_jsonrpc_message(FILE* in)
@@ -51,12 +58,13 @@ static char* read_jsonrpc_message(FILE* in)
     return line; /* caller must free() */
 }
 
-static int write_jsonrpc_message(FILE* out, const char* json_str)
+static void write_jsonrpc_message(FILE* out, cJSON* json)
 {
-    fwrite(json_str, 1, strlen(json_str), out);
-    fwrite("\n", 1, 1, out);
+    char* s = cJSON_PrintUnformatted(json);
+    if (!s) return;
+    fprintf(out, "%s\n", s);
     fflush(out);
-    return 0;
+    free(s);
 }
 
 const char* mcp_error_string(int code)
@@ -73,80 +81,33 @@ const char* mcp_error_string(int code)
     }
 }
 
-McpServer* mcp_server_create(void)
+void mcp_set_name(const char* name)
 {
-    McpServer* server = calloc(1, sizeof(McpServer));
-    if (!server) {
-        return NULL;
-    }
-
-    server->name = strdup("mcp-server");
-    server->version = strdup("1.0.0");
-
-    if (!server->name || !server->version) {
-        mcp_server_destroy(server);
-        return NULL;
-    }
-
-    return server;
+    mcp_server_name = name;
 }
 
-void mcp_server_destroy(McpServer* server)
+void mcp_set_version(const char* version)
 {
-    if (!server) {
+    mcp_server_version = version;
+}
+
+void mcp_add_tool(const McpTool* tool)
+{
+    static int n = 0;
+    if (n >= MCP_MAX_TOOLS) {
+        fprintf(stderr, "Add more than %d tools, skip\n", MCP_MAX_TOOLS);
         return;
     }
 
-    free(server->name);
-    free(server->version);
-    free(server);
-}
-
-int mcp_server_set_name(McpServer* server, const char* name)
-{
-    if (!server || !name) {
-        return MCP_ERROR_INVALID_ARGUMENT;
-    }
-
-    char* new_name = strdup(name);
-    if (!new_name) {
-        return MCP_ERROR_OUT_OF_MEMORY;
-    }
-
-    free(server->name);
-    server->name = new_name;
-    return MCP_ERROR_NONE;
-}
-
-int mcp_server_set_version(McpServer* server, const char* version)
-{
-    if (!server || !version) {
-        return MCP_ERROR_INVALID_ARGUMENT;
-    }
-
-    char* new_version = strdup(version);
-    if (!new_version) {
-        return MCP_ERROR_OUT_OF_MEMORY;
-    }
-
-    free(server->version);
-    server->version = new_version;
-    return MCP_ERROR_NONE;
-}
-
-void mcp_server_register_tool(McpServer* server, const McpTool* tool)
-{
-    assert(tool);
-    assert(server->tool_count < MCP_MAX_TOOLS);
-    server->tools[server->tool_count] = *tool;
-    server->tool_count++;
+    mcp_server_tools[n++] = *tool;
 }
 
 /* Prompt API removed in this build */
 
-static cJSON* handle_initialize(McpServer* server, cJSON* params)
+static cJSON* jsonrpc_initialize(cJSON* params)
 {
     (void)params;
+
     cJSON* response = cJSON_CreateObject();
 
     /* Protocol version */
@@ -160,14 +121,12 @@ static cJSON* handle_initialize(McpServer* server, cJSON* params)
     cJSON_AddBoolToObject(tools_cap, "listChanged", cJSON_False);
     cJSON_AddItemToObject(capabilities, "tools", tools_cap);
 
-    /* Prompts capability removed */
-
     cJSON_AddItemToObject(response, "capabilities", capabilities);
 
     /* Server info */
     cJSON* server_info = cJSON_CreateObject();
-    cJSON_AddStringToObject(server_info, "name", server->name);
-    cJSON_AddStringToObject(server_info, "version", server->version);
+    cJSON_AddStringToObject(server_info, "name", mcp_server_name);
+    cJSON_AddStringToObject(server_info, "version", mcp_server_version);
     cJSON_AddItemToObject(response, "serverInfo", server_info);
 
     return response;
@@ -188,7 +147,7 @@ static const char* schema_type_to_string(mcp_input_schema_type_e t)
 
 /* Convert internal McpInputSchema to a cJSON object representing the schema.
    Returns a new cJSON object or NULL if schema is null/empty. */
-static cJSON* McpInputSchema_to_json(const McpInputSchema* s)
+static cJSON* mcp_input_schema_marshal(const McpInputSchema* s)
 {
     if (!s) return NULL;
     if (s->type == MCP_INPUT_SCHEMA_TYPE_NULL) return NULL;
@@ -204,7 +163,7 @@ static cJSON* McpInputSchema_to_json(const McpInputSchema* s)
         cJSON* props = cJSON_CreateObject();
         const McpInputSchema* p = s->properties;
         while (p && p->type != MCP_INPUT_SCHEMA_TYPE_NULL) {
-            cJSON* prop_schema = McpInputSchema_to_json(p);
+            cJSON* prop_schema = mcp_input_schema_marshal(p);
             if (p->name && prop_schema) {
                 cJSON_AddItemToObject(props, p->name, prop_schema);
             }
@@ -223,7 +182,7 @@ static cJSON* McpInputSchema_to_json(const McpInputSchema* s)
     } else if (s->type == MCP_INPUT_SCHEMA_TYPE_ARRAY) {
         cJSON* items = NULL;
         if (s->properties && s->properties->type != MCP_INPUT_SCHEMA_TYPE_NULL) {
-            items = McpInputSchema_to_json(s->properties);
+            items = mcp_input_schema_marshal(s->properties);
         } else {
             items = cJSON_CreateObject();
             cJSON_AddStringToObject(items, "type", schema_type_to_string(s->type_arr));
@@ -234,42 +193,37 @@ static cJSON* McpInputSchema_to_json(const McpInputSchema* s)
     return obj;
 }
 
-static cJSON* handle_tools_list(McpServer* server, cJSON* params)
+static cJSON* jsonrpc_tools_list(cJSON* params)
 {
     (void)params;
-    cJSON* tools = cJSON_CreateArray();
-
-    for (int i = 0; i < server->tool_count; i++) {
-        cJSON* tool = cJSON_CreateObject();
-        cJSON_AddStringToObject(tool, "name", server->tools[i].name);
-        cJSON_AddStringToObject(tool, "description",
-            server->tools[i].description ? server->tools[i].description : "");
-
-        cJSON* schema_json = McpInputSchema_to_json(&server->tools[i].input_schema);
-        if (schema_json) {
-            cJSON_AddItemToObject(tool, "inputSchema", schema_json);
-        }
-
-        cJSON_AddItemToArray(tools, tool);
-    }
-
     cJSON* response = cJSON_CreateObject();
-    cJSON_AddItemToObject(response, "tools", tools);
+    cJSON* tools = cJSON_AddArrayToObject(response, "tools");
+    for (McpTool* i = mcp_server_tools; i->name; i++) {
+        cJSON* tool = cJSON_CreateObject();
+        cJSON_AddItemToArray(tools, tool);
+
+        cJSON_AddStringToObject(tool, "name", i->name);
+        cJSON_AddStringToObject(tool, "description", i->description);
+        cJSON* schema_json = mcp_input_schema_marshal(&i->input_schema);
+        if (schema_json)
+            cJSON_AddItemToObject(tool, "inputSchema", schema_json);
+    }
     return response;
 }
 
-static cJSON* handle_tools_call(McpServer* server, cJSON* params)
+static cJSON* jsonrpc_tools_call(cJSON* params)
 {
-    cJSON* name = cJSON_GetObjectItem(params, "name");
-    cJSON* args = cJSON_GetObjectItem(params, "arguments");
-    if (!name || !cJSON_IsString(name))
+    cJSON* name = cJSON_Select(params, ".name:s");
+    if (!name)
         return NULL;
 
-    for (int i = 0; i < server->tool_count; i++) {
-        if (strcmp(server->tools[i].name, name->valuestring) != 0)
+    cJSON* args = cJSON_GetObjectItem(params, "arguments");
+
+    for (McpTool* i = mcp_server_tools; i->name; i++) {
+        if (strcmp(i->name, name->valuestring) != 0)
             continue;
 
-        McpToolCallResult* result = server->tools[i].handler(args);
+        McpToolCallResult* result = i->handler(args);
         if (!result)
             return NULL;
 
@@ -299,128 +253,63 @@ static cJSON* handle_tools_call(McpServer* server, cJSON* params)
     return NULL;
 }
 
-/* Prompts removed from this minimal implementation */
-static cJSON* handle_prompts_list(McpServer* server, cJSON* params)
+static cJSON* jsonrpc_notifications_initialized(cJSON* params)
 {
-    (void)server; (void)params;
-    return NULL;
-}
-
-static void handle_notifications_initialized(McpServer* server, cJSON* params)
-{
-    (void)server;
     (void)params;
-    /* Client has finished initialization. No action needed for now. */
-}
-
-static cJSON* handle_prompts_get(McpServer* server, cJSON* params)
-{
-    (void)server; (void)params;
     return NULL;
 }
 
-static int process_message(McpServer* server, const char* json_str, char** response)
+static cJSON* handle_request(cJSON* request)
 {
-    cJSON* request = cJSON_Parse(json_str);
-    if (!request)
-        return MCP_ERROR_PROTOCOL;
+    cJSON* method = cJSON_Select(request, ".method:s");
+    if (!method)
+        return NULL;
 
     cJSON* id = cJSON_GetObjectItem(request, "id");
-    cJSON* method = cJSON_GetObjectItem(request, "method");
     cJSON* params = cJSON_GetObjectItem(request, "params");
 
-    if (!method || !cJSON_IsString(method)) {
-        cJSON_Delete(request);
-        return MCP_ERROR_PROTOCOL;
+    for (JsonrpcMethod* i = jsonrpc_methods; i->name; i++) {
+        if (strcmp(method->valuestring, i->name) != 0)
+            continue;
+
+        cJSON* result = i->handler(params);
+        if (!result)
+            return NULL;
+
+        cJSON* response = cJSON_CreateObject();
+        cJSON_AddStringToObject(response, "jsonrpc", "2.0");
+        cJSON_AddItemReferenceToObject(response, "id", id);
+        cJSON_AddItemToObject(response, "result", result);
+        return response;
     }
 
-    const char* method_name = method->valuestring;
-    int is_notification = (id == NULL);
-
-    /* Handle notifications (no id, no response) */
-    if (strcmp(method_name, "notifications/initialized") == 0) {
-        handle_notifications_initialized(server, params);
-        cJSON_Delete(request);
-        *response = NULL;
-        return MCP_ERROR_NONE;
-    }
-
-    /* Handle requests (have id, need response) */
-    cJSON* result = NULL;
-    int error = MCP_ERROR_NONE;
-
-    if (strcmp(method_name, "initialize") == 0) {
-        result = handle_initialize(server, params);
-    } else if (strcmp(method_name, "tools/list") == 0) {
-        result = handle_tools_list(server, params);
-    } else if (strcmp(method_name, "tools/call") == 0) {
-        result = handle_tools_call(server, params);
-    } else if (strcmp(method_name, "prompts/list") == 0) {
-        result = handle_prompts_list(server, params);
-    } else if (strcmp(method_name, "prompts/get") == 0) {
-        result = handle_prompts_get(server, params);
-    } else {
-        /* Unknown method - only error if it's a request, ignore notifications */
-        if (is_notification) {
-            cJSON_Delete(request);
-            *response = NULL;
-            return MCP_ERROR_NONE;
-        }
-        error = MCP_ERROR_NOT_IMPLEMENTED;
-    }
-
-    cJSON* response_obj = cJSON_CreateObject();
-    cJSON_AddStringToObject(response_obj, "jsonrpc", "2.0");
-
-    if (id) {
-        cJSON_AddItemReferenceToObject(response_obj, "id", id);
-    }
-
-    if (error == MCP_ERROR_NONE && result) {
-        cJSON_AddItemToObject(response_obj, "result", result);
-    } else {
-        cJSON* error_obj = cJSON_CreateObject();
-        cJSON_AddNumberToObject(error_obj, "code", error);
-        cJSON_AddStringToObject(error_obj, "message", mcp_error_string(error));
-        cJSON_AddItemToObject(response_obj, "error", error_obj);
-    }
-
-    *response = cJSON_PrintUnformatted(response_obj);
-    cJSON_Delete(response_obj);
-    cJSON_Delete(request);
-
-    return MCP_ERROR_NONE;
+    /* TODO: return error message */
+    return NULL;
 }
 
-int mcp_server_serve_stdio(McpServer* server)
+void mcp_main(int argc, const char** argv)
 {
-    if (!server) {
-        return MCP_ERROR_INVALID_ARGUMENT;
-    }
+    (void)argc;
+    (void)argv;
 
-    server->running = 1;
-
-    while (server->running) {
-        char* json_str = read_jsonrpc_message(stdin);
-        if (!json_str) {
+    while (1) {
+        char* message = read_jsonrpc_message(stdin);
+        if (!message)
             break;
-        }
 
-        char* response = NULL;
-        process_message(server, json_str, &response);
+        cJSON* request = cJSON_Parse(message);
+        free(message);
+        if (!request)
+            continue;
 
+        cJSON* response = handle_request(request);
         if (response) {
-            /* Use helper to write JSON-RPC response and flush */
-            if (write_jsonrpc_message(stdout, response) != 0) {
-                fprintf(stderr, "mcp: failed to write response\n");
-            }
+            write_jsonrpc_message(stdout, response);
             free(response);
         }
 
-        free(json_str);
+        free(request);
     }
-
-    return MCP_ERROR_NONE;
 }
 
 McpToolCallResult* mcp_tool_call_result_create()
@@ -503,14 +392,6 @@ bool mcp_tool_call_result_add_image(McpToolCallResult* r, const char* data, cons
 
     mcp_tool_call_result_add_content(r, i);
     return true;
-}
-
-int mcp_server_serve(McpServer* server, const char* address, int port)
-{
-    (void)server;
-    (void)address;
-    (void)port;
-    return MCP_ERROR_NOT_IMPLEMENTED;
 }
 
 /* JSON selector made by antirez.

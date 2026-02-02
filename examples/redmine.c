@@ -312,25 +312,21 @@ static McpTool tool_list_projects = {
     },
 };
 
-int main(void)
+int main(int argc, const char* argv[])
 {
     redmine_config.base_url = getenv("REDMINE_URL");
     redmine_config.api_key = getenv("REDMINE_API_KEY");
 
     curl_global_init(CURL_GLOBAL_DEFAULT);
 
-    McpServer* server = mcp_server_create();
-    mcp_server_set_name(server, "redmine-mcp");
-    mcp_server_set_version(server, "1.0.0");
+    mcp_set_name("redmine-mcp");
+    mcp_set_version("1.0.0");
 
-    mcp_server_register_tool(server, &tool_list_projects);
-    mcp_server_register_tool(server, &tool_list_activities);
+    mcp_add_tool(&tool_list_projects);
+    mcp_add_tool(&tool_list_activities);
 
     fprintf(stderr, "Redmine MCP Server running...\n");
-
-    int result = mcp_server_serve_stdio(server);
-
-    mcp_server_destroy(server);
+    mcp_main(argc, argv);
     curl_global_cleanup();
-    return result;
+    return 0;
 }

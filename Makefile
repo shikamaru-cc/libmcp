@@ -1,5 +1,5 @@
 CC = gcc
-CFLAGS = -g -Wall -Wextra -O2
+CFLAGS = -g -Wall -Wextra -O0
 CURL_CFLAGS = $(shell curl-config --cflags)
 CURL_LIBS = $(shell curl-config --libs)
 

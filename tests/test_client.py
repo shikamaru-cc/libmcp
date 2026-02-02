@@ -26,10 +26,6 @@ try:
     response = read_message(proc)
     print(f"Tools list: {response}")
 
-    send_message(proc, '{"jsonrpc":"2.0","id":3,"method":"prompts/list","params":{}}')
-    response = read_message(proc)
-    print(f"Prompts list: {response}")
-
     send_message(proc, '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"add","arguments":{"a":5,"b":3}}}')
     response = read_message(proc)
     print(f"Add 5+3: {response}")
@@ -37,10 +33,6 @@ try:
     send_message(proc, '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"multiply","arguments":{"a":4,"b":6}}}')
     response = read_message(proc)
     print(f"Multiply 4*6: {response}")
-
-    send_message(proc, '{"jsonrpc":"2.0","id":6,"method":"prompts/get","params":{"name":"sample","arguments":{}}}')
-    response = read_message(proc)
-    print(f"Get prompt: {response}")
 
 finally:
     proc.terminate()

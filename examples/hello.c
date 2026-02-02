@@ -94,27 +94,17 @@ static McpTool tool_weather = {
     },
 };
 
-int main(void)
+int main(int argc, const char* argv[])
 {
-    McpServer* server = mcp_server_create();
-    if (!server) {
-        fprintf(stderr, "Failed to create server\n");
-        return 1;
-    }
+    mcp_set_name("libmcp-sample");
+    mcp_set_version("1.0.0");
 
-    mcp_server_set_name(server, "libmcp-sample");
-    mcp_server_set_version(server, "1.0.0");
-
-    mcp_server_register_tool(server, &tool_add);
-    mcp_server_register_tool(server, &tool_multiply);
-    mcp_server_register_tool(server, &tool_weather);
-
-    /* prompts removed - prompt handler unused */
+    mcp_add_tool(&tool_add);
+    mcp_add_tool(&tool_multiply);
+    mcp_add_tool(&tool_weather);
 
     fprintf(stderr, "MCP Example Server running...\n");
 
-    int result = mcp_server_serve_stdio(server);
-
-    mcp_server_destroy(server);
-    return result;
+    mcp_main(argc, argv);
+    return 0;
 }

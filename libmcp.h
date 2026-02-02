@@ -10,9 +10,6 @@
 extern "C" {
 #endif
 
-typedef struct McpServer McpServer;
-typedef struct McpConnection McpConnection;
-
 typedef int mcp_error_code_t;
 
 typedef enum {
@@ -83,19 +80,11 @@ static inline void mcp_tool_call_result_set_error(McpToolCallResult* r)
     r->is_error = true;
 }
 
-/* Server lifecycle and registration */
-McpServer* mcp_server_create(void);
+void mcp_add_tool(const McpTool* tool);
+void mcp_set_name(const char* name);
+void mcp_set_version(const char* version);
 
-void mcp_server_destroy(McpServer* server);
-int mcp_server_set_name(McpServer* server, const char* name);
-int mcp_server_set_version(McpServer* server, const char* version);
-void mcp_server_register_tool(McpServer* server, const McpTool* tool);
-
-int mcp_server_serve(McpServer* server, const char* address, int port);
-
-int mcp_server_serve_stdio(McpServer* server);
-
-const char* mcp_error_string(int code);
+void mcp_main(int argc, const char** argv);
 
 cJSON *cJSON_Select(cJSON *o, const char *fmt, ...);
 
