@@ -1540,6 +1540,86 @@ static McpTool tool_get_project = {
     },
 };
 
+static McpToolCallResult* get_user_handler(cJSON* params)
+{
+    McpToolCallResult* r = mcp_tool_call_result_create();
+    if (!r)
+        return NULL;
+
+    cJSON* user_id_json = cJSON_Select(params, ".user_id:n");
+    if (!user_id_json) {
+        mcp_tool_call_result_set_error(r);
+        mcp_tool_call_result_add_text(r, "user_id parameter is required");
+        return r;
+    }
+
+    int user_id = user_id_json->valueint;
+    char path[128];
+    snprintf(path, sizeof(path), "users/%d.json", user_id);
+
+    cJSON* json = redmine_get(path);
+    if (!json) {
+        mcp_tool_call_result_set_error(r);
+        mcp_tool_call_result_add_text(r, "Failed to fetch user from Redmine");
+        return r;
+    }
+
+    cJSON* user = cJSON_Select(json, ".user");
+    if (!user) {
+        cJSON_Delete(json);
+        mcp_tool_call_result_set_error(r);
+        mcp_tool_call_result_add_text(r, "Invalid user response");
+        return r;
+    }
+
+    cJSON* id = cJSON_Select(user, ".id:n");
+    cJSON* login = cJSON_Select(user, ".login:s");
+    cJSON* firstname = cJSON_Select(user, ".firstname:s");
+    cJSON* lastname = cJSON_Select(user, ".lastname:s");
+    cJSON* mail = cJSON_Select(user, ".mail:s");
+    cJSON* created_on = cJSON_Select(user, ".created_on:s");
+    cJSON* last_login_on = cJSON_Select(user, ".last_login_on:s");
+    cJSON* status = cJSON_Select(user, ".status:n");
+
+    if (id)
+        mcp_tool_call_result_add_textf(r, "ID: %d\n", id->valueint);
+    if (login)
+        mcp_tool_call_result_add_textf(r, "Login: %s\n", login->valuestring);
+    if (firstname)
+        mcp_tool_call_result_add_textf(r, "First Name: %s\n", firstname->valuestring);
+    if (lastname)
+        mcp_tool_call_result_add_textf(r, "Last Name: %s\n", lastname->valuestring);
+    if (mail)
+        mcp_tool_call_result_add_textf(r, "Email: %s\n", mail->valuestring);
+    if (status)
+        mcp_tool_call_result_add_textf(r, "Status: %d\n", status->valueint);
+    if (created_on)
+        mcp_tool_call_result_add_textf(r, "Created: %s\n", created_on->valuestring);
+    if (last_login_on)
+        mcp_tool_call_result_add_textf(r, "Last Login: %s\n", last_login_on->valuestring);
+
+    cJSON_Delete(json);
+    return r;
+}
+
+static McpInputSchema tool_get_user_schema[] = {
+    { .name = "user_id",
+      .description = "User ID to fetch details for",
+      .type = MCP_INPUT_SCHEMA_TYPE_NUMBER,
+    },
+    mcp_input_schema_null
+};
+
+static McpTool tool_get_user = {
+    .name = "get_user",
+    .description = "Get detailed information about a specific user",
+    .handler = get_user_handler,
+    .input_schema = {
+        .type = MCP_INPUT_SCHEMA_TYPE_OBJECT,
+        .properties = tool_get_user_schema,
+    },
+};
+
 int main(int argc, const char* argv[])
 {
     curl_global_init(CURL_GLOBAL_DEFAULT);
@@ -1550,6 +1630,15 @@ int main(int argc, const char* argv[])
     mcp_add_tool(&tool_list_projects);
     mcp_add_tool(&tool_list_activities);
     mcp_add_tool(&tool_search_wiki);
+    mcp_add_tool(&tool_get_issue);
+    mcp_add_tool(&tool_list_issues);
+    mcp_add_tool(&tool_add_issue_note);
+    mcp_add_tool(&tool_create_issue);
+    mcp_add_tool(&tool_get_wiki_page);
+    mcp_add_tool(&tool_list_wiki_pages);
+    mcp_add_tool(&tool_list_time_entries);
+    mcp_add_tool(&tool_get_project);
+    mcp_add_tool(&tool_get_user);
 
     fprintf(stderr, "Redmine MCP Server running...\n");
     mcp_main(argc, argv);
