@@ -1301,6 +1301,144 @@ static McpTool tool_list_wiki_pages = {
     },
 };
 
+static McpToolCallResult* list_time_entries_handler(cJSON* params)
+{
+    McpToolCallResult* r = mcp_tool_call_result_create();
+    if (!r)
+        return NULL;
+
+    int limit = 25;
+    cJSON* limit_json = cJSON_Select(params, ".limit:n");
+    if (limit_json) {
+        limit = limit_json->valueint;
+        if (limit < 1) limit = 25;
+    }
+
+    int offset = 0;
+    cJSON* offset_json = cJSON_Select(params, ".offset:n");
+    if (offset_json) {
+        offset = offset_json->valueint;
+        if (offset < 0) offset = 0;
+    }
+
+    char query[512] = "";
+    size_t query_len = 0;
+
+    cJSON* user_id_json = cJSON_Select(params, ".user_id:n");
+    if (user_id_json) {
+        query_len += snprintf(query + query_len, sizeof(query) - query_len,
+            "user_id=%d&", user_id_json->valueint);
+    }
+
+    cJSON* project_id_json = cJSON_Select(params, ".project_id:n");
+    if (project_id_json) {
+        query_len += snprintf(query + query_len, sizeof(query) - query_len,
+            "project_id=%d&", project_id_json->valueint);
+    }
+
+    cJSON* issue_id_json = cJSON_Select(params, ".issue_id:n");
+    if (issue_id_json) {
+        query_len += snprintf(query + query_len, sizeof(query) - query_len,
+            "issue_id=%d&", issue_id_json->valueint);
+    }
+
+    char path[512];
+    snprintf(path, sizeof(path), "time_entries.json?%slimit=%d&offset=%d&sort=spent_on:desc",
+        query, limit, offset);
+
+    cJSON* json = redmine_get(path);
+    if (!json) {
+        mcp_tool_call_result_set_error(r);
+        mcp_tool_call_result_add_text(r, "Failed to fetch time entries from Redmine");
+        return r;
+    }
+
+    cJSON* total_count = cJSON_Select(json, ".total_count:n");
+    if (total_count)
+        mcp_tool_call_result_add_textf(r, "Total: %d\n", total_count->valueint);
+
+    cJSON* off = cJSON_Select(json, ".offset:n");
+    if (off)
+        mcp_tool_call_result_add_textf(r, "Offset: %d\n", off->valueint);
+
+    mcp_tool_call_result_add_text(r, "\n");
+
+    cJSON* time_entries = cJSON_Select(json, ".time_entries:a");
+    if (!time_entries) {
+        cJSON_Delete(json);
+        mcp_tool_call_result_set_error(r);
+        mcp_tool_call_result_add_text(r, "No time entries found");
+        return r;
+    }
+
+    cJSON* entry = NULL;
+    cJSON_ArrayForEach(entry, time_entries) {
+        cJSON* id = cJSON_Select(entry, ".id:n");
+        cJSON* project = cJSON_Select(entry, ".project.name:s");
+        cJSON* issue = cJSON_Select(entry, ".issue.id:n");
+        cJSON* user = cJSON_Select(entry, ".user.name:s");
+        cJSON* activity = cJSON_Select(entry, ".activity.name:s");
+        cJSON* hours = cJSON_Select(entry, ".hours:n");
+        cJSON* comments = cJSON_Select(entry, ".comments:s");
+        cJSON* spent_on = cJSON_Select(entry, ".spent_on:s");
+
+        if (id)
+            mcp_tool_call_result_add_textf(r, "Entry #%d\n", id->valueint);
+        if (project)
+            mcp_tool_call_result_add_textf(r, "  Project: %s\n", project->valuestring);
+        if (issue)
+            mcp_tool_call_result_add_textf(r, "  Issue: #%d\n", issue->valueint);
+        if (user)
+            mcp_tool_call_result_add_textf(r, "  User: %s\n", user->valuestring);
+        if (activity)
+            mcp_tool_call_result_add_textf(r, "  Activity: %s\n", activity->valuestring);
+        if (hours)
+            mcp_tool_call_result_add_textf(r, "  Hours: %.2f\n", hours->valuedouble);
+        if (comments)
+            mcp_tool_call_result_add_textf(r, "  Comments: %s\n", comments->valuestring);
+        if (spent_on)
+            mcp_tool_call_result_add_textf(r, "  Date: %s\n", spent_on->valuestring);
+        mcp_tool_call_result_add_text(r, "\n");
+    }
+
+    cJSON_Delete(json);
+    return r;
+}
+
+static McpInputSchema tool_list_time_entries_schema[] = {
+    { .name = "user_id",
+      .description = "Filter by user ID (optional)",
+      .type = MCP_INPUT_SCHEMA_TYPE_NUMBER,
+    },
+    { .name = "project_id",
+      .description = "Filter by project ID (optional)",
+      .type = MCP_INPUT_SCHEMA_TYPE_NUMBER,
+    },
+    { .name = "issue_id",
+      .description = "Filter by issue ID (optional)",
+      .type = MCP_INPUT_SCHEMA_TYPE_NUMBER,
+    },
+    { .name = "limit",
+      .description = "Maximum number of results to return (optional, default: 25)",
+      .type = MCP_INPUT_SCHEMA_TYPE_NUMBER,
+    },
+    { .name = "offset",
+      .description = "Skip this number of results for pagination (optional, default: 0)",
+      .type = MCP_INPUT_SCHEMA_TYPE_NUMBER,
+    },
+    mcp_input_schema_null
+};
+
+static McpTool tool_list_time_entries = {
+    .name = "list_time_entries",
+    .description = "List time entries with optional filters",
+    .handler = list_time_entries_handler,
+    .input_schema = {
+        .type = MCP_INPUT_SCHEMA_TYPE_OBJECT,
+        .properties = tool_list_time_entries_schema,
+    },
+};
+
 int main(int argc, const char* argv[])
 {
     curl_global_init(CURL_GLOBAL_DEFAULT);
