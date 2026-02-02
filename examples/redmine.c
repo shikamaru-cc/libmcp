@@ -27,6 +27,13 @@ static struct {
     int user_id;
 } redmine_config;
 
+typedef struct {
+    int id;
+    char* name;
+} IssueStatus;
+
+static IssueStatus* redmine_issue_statuses = NULL;
+
 static cJSON* redmine_get(const char* path)
 {
     CURL* curl = NULL;
@@ -67,10 +74,46 @@ static cJSON* redmine_get(const char* path)
     free(response);
     return json;
 
-fail:
+ fail:
     if (curl) curl_easy_cleanup(curl);
     if (headers) curl_slist_free_all(headers);
     if (response) free(response);
+    return NULL;
+}
+
+static void redmine_issue_statuses_init()
+{
+    cJSON* json = redmine_get("issue_statuses.json");
+    if (!json)
+        return;
+
+    cJSON* statuses = cJSON_Select(json, ".issue_statuses:a");
+    if (!statuses) {
+        cJSON_Delete(json);
+        return;
+    }
+
+    cJSON* status = NULL;
+    cJSON_ArrayForEach(status, statuses) {
+        cJSON* id = cJSON_Select(status, ".id:n");
+        cJSON* name = cJSON_Select(status, ".name:s");
+        if (id && name) {
+            IssueStatus i;
+            i.id = id->valueint;
+            i.name = strdup(name->valuestring);
+            *stb_arr_add(redmine_issue_statuses) = i;
+        }
+    }
+
+    cJSON_Delete(json);
+}
+
+static const char* redmine_status_id_to_name(int id)
+{
+    for (int i = 0; i < stb_arr_len(redmine_issue_statuses); i++) {
+        if (redmine_issue_statuses[i].id == id)
+            return redmine_issue_statuses[i].name;
+    }
     return NULL;
 }
 
@@ -257,6 +300,13 @@ static McpToolCallResult* list_activities_handler(cJSON* params)
                         "%s: %s (%d %s) modified %s\n",
                         date, time_str, issue_id, issue_subject,
                         name->valuestring);
+                else if (name && strcmp(name->valuestring, "status_id") == 0)
+                    mcp_tool_call_result_add_textf(r,
+                        "%s: %s (%d %s) modified %s from %s to %s\n",
+                        date, time_str, issue_id, issue_subject,
+                        name->valuestring,
+                        redmine_status_id_to_name(atoi(old_value->valuestring)),
+                        redmine_status_id_to_name(atoi(new_value->valuestring)));
                 else
                     mcp_tool_call_result_add_textf(r,
                         "%s: %s (%d %s) modified %s from %s to %s\n",
@@ -336,14 +386,16 @@ int main(int argc, const char* argv[])
 
     curl_global_init(CURL_GLOBAL_DEFAULT);
 
+    redmine_issue_statuses_init();
+
     mcp_set_name("redmine-mcp");
     mcp_set_version("1.0.0");
-
     mcp_add_tool(&tool_list_projects);
     mcp_add_tool(&tool_list_activities);
 
     fprintf(stderr, "Redmine MCP Server running...\n");
     mcp_main(argc, argv);
+
     curl_global_cleanup();
     return 0;
 }
