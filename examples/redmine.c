@@ -239,6 +239,7 @@ static McpToolCallResult* list_activities_handler(cJSON* params)
         date[10] = '\0';
 
         int issue_id = cJSON_Select(activities[i], ".issue_id:n")->valueint;
+        const char* issue_subject = cJSON_Select(activities[i], ".subject:s")->valuestring;
         char* time_str = &created_on->valuestring[11];
         time_str[8] = '\0';
 
@@ -247,22 +248,40 @@ static McpToolCallResult* list_activities_handler(cJSON* params)
             cJSON* detail = NULL;
             cJSON_ArrayForEach(detail, details) {
                 cJSON* name = cJSON_Select(detail, ".name:s");
-                mcp_tool_call_result_add_textf(r, "%s: %s (%d) modified %s\n", date, time_str, issue_id,
-                                     name ? name->valuestring : "unknown");
+                cJSON* old_value = cJSON_Select(detail, ".old_value:s");
+                cJSON* new_value = cJSON_Select(detail, ".new_value:s");
+
+                if (name && strcmp(name->valuestring, "description") == 0)
+                    /* description is too long, not print change info */
+                    mcp_tool_call_result_add_textf(r,
+                        "%s: %s (%d %s) modified %s\n",
+                        date, time_str, issue_id, issue_subject,
+                        name->valuestring);
+                else
+                    mcp_tool_call_result_add_textf(r,
+                        "%s: %s (%d %s) modified %s from %s to %s\n",
+                        date, time_str, issue_id, issue_subject,
+                        name ? name->valuestring : "",
+                        old_value ? old_value->valuestring : "",
+                        new_value ? new_value->valuestring : "");
             }
         }
 
         cJSON* notes = cJSON_Select(activities[i], ".notes:s");
-        if (notes && strlen(notes->valuestring) > 0) {
-            if (strlen(notes->valuestring) > 30) {
-                char short_notes[34];
-                memcpy(short_notes, notes->valuestring, 30);
-                short_notes[30] = '\0';
-                strcpy(short_notes + 30, "...");
-                mcp_tool_call_result_add_textf(r, "%s: %s (%d) comment: %s\n", date, time_str, issue_id, short_notes);
+        size_t len = notes ? strlen(notes->valuestring) : 0;
+        if (len > 0) {
+            char short_notes[128];
+            size_t notes_max = 64;
+            if (len > notes_max) {
+                memcpy(short_notes, notes->valuestring, notes_max);
+                strcpy(short_notes + notes_max, "...");
             } else {
-                mcp_tool_call_result_add_textf(r, "%s: %s (%d) comment: %s\n", date, time_str, issue_id, notes->valuestring);
+                strcpy(short_notes, notes->valuestring);
             }
+
+            mcp_tool_call_result_add_textf(r,
+                "%s: %s (%d %s) comment: %s\n",
+                date, time_str, issue_id, issue_subject, short_notes);
         }
     }
 
@@ -275,15 +294,13 @@ static McpToolCallResult* list_activities_handler(cJSON* params)
 }
 
 static McpInputSchema tool_list_activities_schema[] = {
-    {
-        .name = "user_id",
-        .description = "User ID to get activities for (optional, can be set via REDMINE_USER_ID env)",
-        .type = MCP_INPUT_SCHEMA_TYPE_NUMBER,
+    { .name = "user_id",
+      .description = "User ID to get activities for (optional, can be set via REDMINE_USER_ID env)",
+      .type = MCP_INPUT_SCHEMA_TYPE_NUMBER,
     },
-    {
-        .name = "start_date",
-        .description = "The start date of user's activities to fetch, should be with format %Y-%m-%d. If empty, setup to 2 weeks ago",
-        .type = MCP_INPUT_SCHEMA_TYPE_STRING,
+    { .name = "start_date",
+      .description = "The start date of user's activities to fetch, should be with format %Y-%m-%d. If empty, setup to 2 weeks ago",
+      .type = MCP_INPUT_SCHEMA_TYPE_STRING,
     },
     mcp_input_schema_null
 };
