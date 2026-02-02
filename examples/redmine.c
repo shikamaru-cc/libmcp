@@ -21,17 +21,14 @@ static size_t write_callback(void* contents, size_t size, size_t nmemb, void* us
     return realsize;
 }
 
-static struct {
-    char* base_url;
-    char* api_key;
-    int user_id;
-} redmine_config;
-
 typedef struct {
     int id;
     char* name;
 } IssueStatus;
 
+static const char* redmine_base_url;
+static const char* redmine_api_key;
+static int redmine_user_id;
 static IssueStatus* redmine_issue_statuses = NULL;
 
 static cJSON* redmine_get(const char* path)
@@ -42,10 +39,10 @@ static cJSON* redmine_get(const char* path)
 
     while (path && *path == '/') path++;
     char url[512];
-    snprintf(url, sizeof(url), "%s/%s", redmine_config.base_url, path);
+    snprintf(url, sizeof(url), "%s/%s", redmine_base_url, path);
 
     char auth_header[256];
-    snprintf(auth_header, sizeof(auth_header), "X-Redmine-API-Key: %s", redmine_config.api_key);
+    snprintf(auth_header, sizeof(auth_header), "X-Redmine-API-Key: %s", redmine_api_key);
 
     curl = curl_easy_init();
     if (curl == NULL)
@@ -74,7 +71,7 @@ static cJSON* redmine_get(const char* path)
     free(response);
     return json;
 
- fail:
+fail:
     if (curl) curl_easy_cleanup(curl);
     if (headers) curl_slist_free_all(headers);
     if (response) free(response);
@@ -108,6 +105,13 @@ static void redmine_issue_statuses_init()
     cJSON_Delete(json);
 }
 
+static void redmine_issue_statuses_cleanup()
+{
+    for (int i = 0; i < stb_arr_len(redmine_issue_statuses); i++)
+        free(redmine_issue_statuses[i].name);
+    free(redmine_issue_statuses);
+}
+
 static const char* redmine_status_id_to_name(int id)
 {
     for (int i = 0; i < stb_arr_len(redmine_issue_statuses); i++) {
@@ -115,6 +119,18 @@ static const char* redmine_status_id_to_name(int id)
             return redmine_issue_statuses[i].name;
     }
     return NULL;
+}
+
+static void redmine_init()
+{
+    redmine_base_url = getenv("REDMINE_URL");
+    redmine_api_key = getenv("REDMINE_API_KEY");
+    redmine_issue_statuses_init();
+}
+
+static void redmine_cleanup()
+{
+    redmine_issue_statuses_cleanup();
 }
 
 static McpToolCallResult* list_projects_handler(cJSON* params)
@@ -381,12 +397,8 @@ static McpTool tool_list_projects = {
 
 int main(int argc, const char* argv[])
 {
-    redmine_config.base_url = getenv("REDMINE_URL");
-    redmine_config.api_key = getenv("REDMINE_API_KEY");
-
     curl_global_init(CURL_GLOBAL_DEFAULT);
-
-    redmine_issue_statuses_init();
+    redmine_init();
 
     mcp_set_name("redmine-mcp");
     mcp_set_version("1.0.0");
@@ -397,5 +409,6 @@ int main(int argc, const char* argv[])
     mcp_main(argc, argv);
 
     curl_global_cleanup();
+    redmine_cleanup();
     return 0;
 }
