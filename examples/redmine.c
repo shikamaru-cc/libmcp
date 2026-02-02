@@ -631,6 +631,115 @@ static McpTool tool_list_projects = {
     },
 };
 
+static McpToolCallResult* get_issue_handler(cJSON* params)
+{
+    McpToolCallResult* r = mcp_tool_call_result_create();
+    if (!r)
+        return NULL;
+
+    cJSON* issue_id_json = cJSON_Select(params, ".issue_id:n");
+    if (!issue_id_json) {
+        mcp_tool_call_result_set_error(r);
+        mcp_tool_call_result_add_text(r, "issue_id parameter is required");
+        return r;
+    }
+
+    int issue_id = issue_id_json->valueint;
+    char path[128];
+    snprintf(path, sizeof(path), "issues/%d.json", issue_id);
+
+    cJSON* json = redmine_get(path);
+    if (!json) {
+        mcp_tool_call_result_set_error(r);
+        mcp_tool_call_result_add_text(r, "Failed to fetch issue from Redmine");
+        return r;
+    }
+
+    cJSON* issue = cJSON_Select(json, ".issue");
+    if (!issue) {
+        cJSON_Delete(json);
+        mcp_tool_call_result_set_error(r);
+        mcp_tool_call_result_add_text(r, "Invalid issue response");
+        return r;
+    }
+
+    cJSON* id = cJSON_Select(issue, ".id:n");
+    cJSON* subject = cJSON_Select(issue, ".subject:s");
+    cJSON* description = cJSON_Select(issue, ".description:s");
+    cJSON* status = cJSON_Select(issue, ".status.name:s");
+    cJSON* priority = cJSON_Select(issue, ".priority.name:s");
+    cJSON* assigned_to = cJSON_Select(issue, ".assigned_to.name:s");
+    cJSON* author = cJSON_Select(issue, ".author.name:s");
+    cJSON* created_on = cJSON_Select(issue, ".created_on:s");
+    cJSON* updated_on = cJSON_Select(issue, ".updated_on:s");
+    cJSON* project = cJSON_Select(issue, ".project.name:s");
+    cJSON* tracker = cJSON_Select(issue, ".tracker.name:s");
+
+    mcp_tool_call_result_add_textf(r, "Issue #%d\n", id ? id->valueint : issue_id);
+    if (subject)
+        mcp_tool_call_result_add_textf(r, "Subject: %s\n", subject->valuestring);
+    if (project)
+        mcp_tool_call_result_add_textf(r, "Project: %s\n", project->valuestring);
+    if (tracker)
+        mcp_tool_call_result_add_textf(r, "Tracker: %s\n", tracker->valuestring);
+    if (status)
+        mcp_tool_call_result_add_textf(r, "Status: %s\n", status->valuestring);
+    if (priority)
+        mcp_tool_call_result_add_textf(r, "Priority: %s\n", priority->valuestring);
+    if (author)
+        mcp_tool_call_result_add_textf(r, "Author: %s\n", author->valuestring);
+    if (assigned_to)
+        mcp_tool_call_result_add_textf(r, "Assigned to: %s\n", assigned_to->valuestring);
+    if (created_on)
+        mcp_tool_call_result_add_textf(r, "Created: %s\n", created_on->valuestring);
+    if (updated_on)
+        mcp_tool_call_result_add_textf(r, "Updated: %s\n", updated_on->valuestring);
+    if (description) {
+        mcp_tool_call_result_add_text(r, "Description:\n");
+        mcp_tool_call_result_add_textf(r, "%s\n", description->valuestring);
+    }
+
+    cJSON* journals = cJSON_Select(issue, ".journals:a");
+    if (journals && cJSON_GetArraySize(journals) > 0) {
+        mcp_tool_call_result_add_text(r, "\nJournal/Notes:\n");
+        cJSON* journal = NULL;
+        cJSON_ArrayForEach(journal, journals) {
+            cJSON* user = cJSON_Select(journal, ".user.name:s");
+            cJSON* notes = cJSON_Select(journal, ".notes:s");
+            cJSON* created_on_j = cJSON_Select(journal, ".created_on:s");
+            
+            if (created_on_j)
+                mcp_tool_call_result_add_textf(r, "[%s] ", created_on_j->valuestring);
+            if (user)
+                mcp_tool_call_result_add_textf(r, "%s", user->valuestring);
+            if (notes)
+                mcp_tool_call_result_add_textf(r, ": %s", notes->valuestring);
+            mcp_tool_call_result_add_text(r, "\n");
+        }
+    }
+
+    cJSON_Delete(json);
+    return r;
+}
+
+static McpInputSchema tool_get_issue_schema[] = {
+    { .name = "issue_id",
+      .description = "Issue ID to fetch",
+      .type = MCP_INPUT_SCHEMA_TYPE_NUMBER,
+    },
+    mcp_input_schema_null
+};
+
+static McpTool tool_get_issue = {
+    .name = "get_issue",
+    .description = "Get detailed information about a specific issue",
+    .handler = get_issue_handler,
+    .input_schema = {
+        .type = MCP_INPUT_SCHEMA_TYPE_OBJECT,
+        .properties = tool_get_issue_schema,
+    },
+};
+
 int main(int argc, const char* argv[])
 {
     curl_global_init(CURL_GLOBAL_DEFAULT);
