@@ -33,11 +33,18 @@ typedef struct {
     char* description;
 } Project;
 
+typedef struct {
+    int id;
+    char* name;
+    int project_id;
+} Version;
+
 static const char* redmine_base_url;
 static const char* redmine_api_key;
 static int redmine_user_id;
 static IssueStatus* redmine_issue_statuses = NULL;
 static Project* redmine_projects = NULL;
+static Version* redmine_versions = NULL;
 
 static cJSON* redmine_get(const char* path)
 {
@@ -144,6 +151,39 @@ static void redmine_projects_init()
     cJSON_Delete(json);
 }
 
+static void redmine_versions_init()
+{
+    for (int i = 0; i < stb_arr_len(redmine_projects); i++) {
+        char path[256];
+        snprintf(path, sizeof(path), "projects/%d/versions.json", redmine_projects[i].id);
+
+        cJSON* json = redmine_get(path);
+        if (!json)
+            continue;
+
+        cJSON* versions = cJSON_Select(json, ".versions:a");
+        if (!versions) {
+            cJSON_Delete(json);
+            continue;
+        }
+
+        cJSON* version = NULL;
+        cJSON_ArrayForEach(version, versions) {
+            cJSON* id = cJSON_Select(version, ".id:n");
+            cJSON* name = cJSON_Select(version, ".name:s");
+            if (id && name) {
+                Version v;
+                v.id = id->valueint;
+                v.name = strdup(name->valuestring);
+                v.project_id = redmine_projects[i].id;
+                *stb_arr_add(redmine_versions) = v;
+            }
+        }
+
+        cJSON_Delete(json);
+    }
+}
+
 static void redmine_user_id_init()
 {
     cJSON* json = redmine_get("users/current.json");
@@ -176,11 +216,27 @@ static void redmine_projects_cleanup()
     stb_arr_free(redmine_projects);
 }
 
+static void redmine_versions_cleanup()
+{
+    for (int i = 0; i < stb_arr_len(redmine_versions); i++)
+        free(redmine_versions[i].name);
+    stb_arr_free(redmine_versions);
+}
+
 static const char* redmine_status_id_to_name(int id)
 {
     for (int i = 0; i < stb_arr_len(redmine_issue_statuses); i++) {
         if (redmine_issue_statuses[i].id == id)
             return redmine_issue_statuses[i].name;
+    }
+    return NULL;
+}
+
+static const char* redmine_version_id_to_name(int id)
+{
+    for (int i = 0; i < stb_arr_len(redmine_versions); i++) {
+        if (redmine_versions[i].id == id)
+            return redmine_versions[i].name;
     }
     return NULL;
 }
@@ -191,11 +247,13 @@ static void redmine_init()
     redmine_api_key = getenv("REDMINE_API_KEY");
     redmine_user_id_init();
     redmine_projects_init();
+    redmine_versions_init();
     redmine_issue_statuses_init();
 }
 
 static void redmine_cleanup()
 {
+    redmine_versions_cleanup();
     redmine_projects_cleanup();
     redmine_issue_statuses_cleanup();
 }
@@ -364,6 +422,13 @@ static McpToolCallResult* list_activities_handler(cJSON* params)
                         name->valuestring,
                         redmine_status_id_to_name(atoi(old_value->valuestring)),
                         redmine_status_id_to_name(atoi(new_value->valuestring)));
+                else if (name && strcmp(name->valuestring, "fixed_version_id") == 0)
+                    mcp_tool_call_result_add_textf(r,
+                        "%s: %s (%d %s) modified %s from %s to %s\n",
+                        date, time_str, issue_id, issue_subject,
+                        name->valuestring,
+                        redmine_version_id_to_name(atoi(old_value->valuestring)),
+                        redmine_version_id_to_name(atoi(new_value->valuestring)));
                 else
                     mcp_tool_call_result_add_textf(r,
                         "%s: %s (%d %s) modified %s from %s to %s\n",
