@@ -7,6 +7,7 @@
 #include "libmcp.h"
 #include "cJSON.h"
 #include "stb.h"
+#include "sds.h"
 
 static size_t write_callback(void* contents, size_t size, size_t nmemb, void* userp)
 {
@@ -322,15 +323,18 @@ static McpToolCallResult* list_projects_handler(cJSON* params)
         return r;
     }
 
+    sds result = sdsempty();
     for (int i = 0; i < stb_arr_len(redmine_projects); i++) {
         Project* p = &redmine_projects[i];
-        mcp_tool_call_result_add_textf(r,
+        result = sdscatprintf(result,
             "ID: %d\nName: %s\nIdentifier: %s\nDescription: %s\n",
             p->id,
             p->name ? p->name : "N/A",
             p->identifier ? p->identifier : "N/A",
             p->description ? p->description : "N/A");
     }
+    mcp_tool_call_result_add_text(r, result);
+    sdsfree(result);
 
     return r;
 }
@@ -440,6 +444,7 @@ static McpToolCallResult* list_activities_handler(cJSON* params)
 
     qsort(activities, stb_arr_len(activities), sizeof(cJSON*), activity_compare_by_created_on);
 
+    sds result = sdsempty();
     for (int i = 0; i < stb_arr_len(activities); i++) {
         cJSON* created_on = cJSON_Select(activities[i], ".created_on:s");
         char date[11];
@@ -460,27 +465,26 @@ static McpToolCallResult* list_activities_handler(cJSON* params)
                 cJSON* new_value = cJSON_Select(detail, ".new_value:s");
 
                 if (name && strcmp(name->valuestring, "description") == 0)
-                    /* description is too long, not print change info */
-                    mcp_tool_call_result_add_textf(r,
+                    result = sdscatprintf(result,
                         "%s: %s (%d %s) modified %s\n",
                         date, time_str, issue_id, issue_subject,
                         name->valuestring);
                 else if (name && strcmp(name->valuestring, "status_id") == 0)
-                    mcp_tool_call_result_add_textf(r,
+                    result = sdscatprintf(result,
                         "%s: %s (%d %s) modified %s from %s to %s\n",
                         date, time_str, issue_id, issue_subject,
                         name->valuestring,
                         redmine_status_id_to_name(atoi(old_value->valuestring)),
                         redmine_status_id_to_name(atoi(new_value->valuestring)));
                 else if (name && strcmp(name->valuestring, "fixed_version_id") == 0)
-                    mcp_tool_call_result_add_textf(r,
+                    result = sdscatprintf(result,
                         "%s: %s (%d %s) modified %s from %s to %s\n",
                         date, time_str, issue_id, issue_subject,
                         name->valuestring,
                         redmine_version_id_to_name(atoi(old_value->valuestring)),
                         redmine_version_id_to_name(atoi(new_value->valuestring)));
                 else
-                    mcp_tool_call_result_add_textf(r,
+                    result = sdscatprintf(result,
                         "%s: %s (%d %s) modified %s from %s to %s\n",
                         date, time_str, issue_id, issue_subject,
                         name ? name->valuestring : "",
@@ -501,7 +505,7 @@ static McpToolCallResult* list_activities_handler(cJSON* params)
                 strcpy(short_notes, notes->valuestring);
             }
 
-            mcp_tool_call_result_add_textf(r,
+            result = sdscatprintf(result,
                 "%s: %s (%d %s) comment: %s\n",
                 date, time_str, issue_id, issue_subject, short_notes);
         }
@@ -512,6 +516,8 @@ static McpToolCallResult* list_activities_handler(cJSON* params)
     }
     stb_arr_free(activities);
 
+    mcp_tool_call_result_add_text(r, result);
+    sdsfree(result);
     return r;
 }
 
@@ -582,21 +588,23 @@ static McpToolCallResult* search_wiki_handler(cJSON* params)
         return r;
     }
 
+    sds result = sdsempty();
+
     cJSON* total_count = cJSON_Select(json, ".total_count:n");
     if (total_count)
-        mcp_tool_call_result_add_textf(r, "Total: %d\n", total_count->valueint);
+        result = sdscatprintf(result, "Total: %d\n", total_count->valueint);
 
     cJSON* off = cJSON_Select(json, ".offset:n");
     if (off)
-        mcp_tool_call_result_add_textf(r, "Offset: %d\n", off->valueint);
+        result = sdscatprintf(result, "Offset: %d\n", off->valueint);
 
-    cJSON* result = NULL;
+    cJSON* result_item = NULL;
     cJSON* results = cJSON_Select(json, ".results:a");
-    cJSON_ArrayForEach(result, results) {
-        cJSON* title = cJSON_Select(result, ".title:s");
-        cJSON* description = cJSON_Select(result, ".description:s");
+    cJSON_ArrayForEach(result_item, results) {
+        cJSON* title = cJSON_Select(result_item, ".title:s");
+        cJSON* description = cJSON_Select(result_item, ".description:s");
         if (!title || !description) continue;
-        mcp_tool_call_result_add_textf(r,
+        result = sdscatprintf(result,
             "Title: %s\n"
             "Description: %s\n",
             title->valuestring,
@@ -604,6 +612,9 @@ static McpToolCallResult* search_wiki_handler(cJSON* params)
     }
 
     cJSON_Delete(json);
+
+    mcp_tool_call_result_add_text(r, result);
+    sdsfree(result);
     return r;
 }
 
@@ -725,46 +736,47 @@ static McpToolCallResult* get_issue_handler(cJSON* params)
     cJSON* project = cJSON_Select(issue, ".project.name:s");
     cJSON* tracker = cJSON_Select(issue, ".tracker.name:s");
 
-    mcp_tool_call_result_add_textf(r, "Issue #%d\n", id ? id->valueint : issue_id);
+    sds result = sdsempty();
+    result = sdscatprintf(result, "Issue #%d\n", id ? id->valueint : issue_id);
     if (subject)
-        mcp_tool_call_result_add_textf(r, "Subject: %s\n", subject->valuestring);
+        result = sdscatprintf(result, "Subject: %s\n", subject->valuestring);
     if (project)
-        mcp_tool_call_result_add_textf(r, "Project: %s\n", project->valuestring);
+        result = sdscatprintf(result, "Project: %s\n", project->valuestring);
     if (tracker)
-        mcp_tool_call_result_add_textf(r, "Tracker: %s\n", tracker->valuestring);
+        result = sdscatprintf(result, "Tracker: %s\n", tracker->valuestring);
     if (status)
-        mcp_tool_call_result_add_textf(r, "Status: %s\n", status->valuestring);
+        result = sdscatprintf(result, "Status: %s\n", status->valuestring);
     if (priority)
-        mcp_tool_call_result_add_textf(r, "Priority: %s\n", priority->valuestring);
+        result = sdscatprintf(result, "Priority: %s\n", priority->valuestring);
     if (author)
-        mcp_tool_call_result_add_textf(r, "Author: %s\n", author->valuestring);
+        result = sdscatprintf(result, "Author: %s\n", author->valuestring);
     if (assigned_to)
-        mcp_tool_call_result_add_textf(r, "Assigned to: %s\n", assigned_to->valuestring);
+        result = sdscatprintf(result, "Assigned to: %s\n", assigned_to->valuestring);
     if (created_on)
-        mcp_tool_call_result_add_textf(r, "Created: %s\n", created_on->valuestring);
+        result = sdscatprintf(result, "Created: %s\n", created_on->valuestring);
     if (updated_on)
-        mcp_tool_call_result_add_textf(r, "Updated: %s\n", updated_on->valuestring);
+        result = sdscatprintf(result, "Updated: %s\n", updated_on->valuestring);
     if (description) {
-        mcp_tool_call_result_add_text(r, "Description:\n");
-        mcp_tool_call_result_add_textf(r, "%s\n", description->valuestring);
+        result = sdscat(result, "Description:\n");
+        result = sdscatprintf(result, "%s\n", description->valuestring);
     }
 
     cJSON* journals = cJSON_Select(issue, ".journals:a");
     if (journals && cJSON_GetArraySize(journals) > 0) {
-        mcp_tool_call_result_add_text(r, "Discussion History:\n");
+        result = sdscat(result, "Discussion History:\n");
 
         cJSON* journal = NULL;
         cJSON_ArrayForEach(journal, journals) {
             cJSON* user = cJSON_Select(journal, ".user.name:s");
             cJSON* notes = cJSON_Select(journal, ".notes:s");
             if (user && notes && strlen(notes->valuestring) > 0)
-                mcp_tool_call_result_add_textf(r, "%s comment: %s", user->valuestring, notes->valuestring);
+                result = sdscatprintf(result, "%s comment: %s", user->valuestring, notes->valuestring);
         }
     }
 
     /* cJSON* attachments = cJSON_Select(issue, ".attachments:a"); */
     /* if (attachments && cJSON_GetArraySize(attachments) > 0) { */
-    /*     mcp_tool_call_result_add_text(r, "Attachments:\n"); */
+    /*     result = sdscat(result, "Attachments:\n"); */
     /*     cJSON* attachment = NULL; */
     /*     cJSON_ArrayForEach(attachment, attachments) { */
     /*         cJSON* filename = cJSON_Select(attachment, ".filename:s"); */
@@ -774,21 +786,24 @@ static McpToolCallResult* get_issue_handler(cJSON* params)
     /*         cJSON* created_on = cJSON_Select(attachment, ".created_on:s"); */
 
     /*         if (filename) */
-    /*             mcp_tool_call_result_add_textf(r, "  - %s", filename->valuestring); */
+    /*             result = sdscatprintf(result, "  - %s", filename->valuestring); */
     /*         if (filesize) */
-    /*             mcp_tool_call_result_add_textf(r, " (%d bytes)", filesize->valueint); */
-    /*         mcp_tool_call_result_add_text(r, "\n"); */
+    /*             result = sdscatprintf(result, " (%d bytes)", filesize->valueint); */
+    /*         result = sdscat(result, "\n"); */
     /*         if (author) */
-    /*             mcp_tool_call_result_add_textf(r, "    Uploaded by: %s\n", author->valuestring); */
+    /*             result = sdscatprintf(result, "    Uploaded by: %s\n", author->valuestring); */
     /*         if (created_on) */
-    /*             mcp_tool_call_result_add_textf(r, "    Date: %s\n", created_on->valuestring); */
+    /*             result = sdscatprintf(result, "    Date: %s\n", created_on->valuestring); */
     /*         if (content_url) */
-    /*             mcp_tool_call_result_add_textf(r, "    URL: %s\n", content_url->valuestring); */
+    /*             result = sdscatprintf(result, "    URL: %s\n", content_url->valuestring); */
     /*     } */
-    /*     mcp_tool_call_result_add_text(r, "\n"); */
+    /*     result = sdscat(result, "\n"); */
     /* } */
 
     cJSON_Delete(json);
+
+    mcp_tool_call_result_add_text(r, result);
+    sdsfree(result);
     return r;
 }
 
@@ -868,19 +883,22 @@ static McpToolCallResult* list_issues_handler(cJSON* params)
         return r;
     }
 
+    sds result = sdsempty();
+
     cJSON* total_count = cJSON_Select(json, ".total_count:n");
     if (total_count)
-        mcp_tool_call_result_add_textf(r, "Total: %d\n", total_count->valueint);
+        result = sdscatprintf(result, "Total: %d\n", total_count->valueint);
 
     cJSON* off = cJSON_Select(json, ".offset:n");
     if (off)
-        mcp_tool_call_result_add_textf(r, "Offset: %d\n", off->valueint);
+        result = sdscatprintf(result, "Offset: %d\n", off->valueint);
 
-    mcp_tool_call_result_add_text(r, "\n");
+    result = sdscat(result, "\n");
 
     cJSON* issues = cJSON_Select(json, ".issues:a");
     if (!issues) {
         cJSON_Delete(json);
+        sdsfree(result);
         mcp_tool_call_result_set_error(r);
         mcp_tool_call_result_add_text(r, "No issues found");
         return r;
@@ -896,21 +914,24 @@ static McpToolCallResult* list_issues_handler(cJSON* params)
         cJSON* project = cJSON_Select(issue, ".project.name:s");
         cJSON* updated_on = cJSON_Select(issue, ".updated_on:s");
 
-        mcp_tool_call_result_add_textf(r, "#%d: %s\n", id ? id->valueint : 0, subject ? subject->valuestring : "N/A");
+        result = sdscatprintf(result, "#%d: %s\n", id ? id->valueint : 0, subject ? subject->valuestring : "N/A");
         if (project)
-            mcp_tool_call_result_add_textf(r, "  Project: %s\n", project->valuestring);
+            result = sdscatprintf(result, "  Project: %s\n", project->valuestring);
         if (status)
-            mcp_tool_call_result_add_textf(r, "  Status: %s\n", status->valuestring);
+            result = sdscatprintf(result, "  Status: %s\n", status->valuestring);
         if (priority)
-            mcp_tool_call_result_add_textf(r, "  Priority: %s\n", priority->valuestring);
+            result = sdscatprintf(result, "  Priority: %s\n", priority->valuestring);
         if (assigned_to)
-            mcp_tool_call_result_add_textf(r, "  Assigned to: %s\n", assigned_to->valuestring);
+            result = sdscatprintf(result, "  Assigned to: %s\n", assigned_to->valuestring);
         if (updated_on)
-            mcp_tool_call_result_add_textf(r, "  Updated: %s\n", updated_on->valuestring);
-        mcp_tool_call_result_add_text(r, "\n");
+            result = sdscatprintf(result, "  Updated: %s\n", updated_on->valuestring);
+        result = sdscat(result, "\n");
     }
 
     cJSON_Delete(json);
+
+    mcp_tool_call_result_add_text(r, result);
+    sdsfree(result);
     return r;
 }
 
@@ -994,8 +1015,12 @@ static McpToolCallResult* add_issue_note_handler(cJSON* params)
         return r;
     }
 
-    mcp_tool_call_result_add_textf(r, "Note added to issue #%d\n", issue_id);
+    sds result = sdsempty();
+    result = sdscatprintf(result, "Note added to issue #%d\n", issue_id);
     cJSON_Delete(json);
+
+    mcp_tool_call_result_add_text(r, result);
+    sdsfree(result);
     return r;
 }
 
@@ -1098,14 +1123,18 @@ static McpToolCallResult* create_issue_handler(cJSON* params)
         return r;
     }
 
+    sds result = sdsempty();
     cJSON* issue = cJSON_Select(json, ".issue");
     if (issue) {
         cJSON* id = cJSON_Select(issue, ".id:n");
         if (id)
-            mcp_tool_call_result_add_textf(r, "Issue #%d created successfully\n", id->valueint);
+            result = sdscatprintf(result, "Issue #%d created successfully\n", id->valueint);
     }
 
     cJSON_Delete(json);
+
+    mcp_tool_call_result_add_text(r, result);
+    sdsfree(result);
     return r;
 }
 
@@ -1205,22 +1234,26 @@ static McpToolCallResult* get_wiki_page_handler(cJSON* params)
     cJSON* updated_on = cJSON_Select(wiki_page, ".updated_on:s");
     cJSON* version = cJSON_Select(wiki_page, ".version:n");
 
+    sds result = sdsempty();
     if (title_r)
-        mcp_tool_call_result_add_textf(r, "Title: %s\n", title_r->valuestring);
+        result = sdscatprintf(result, "Title: %s\n", title_r->valuestring);
     if (author)
-        mcp_tool_call_result_add_textf(r, "Author: %s\n", author->valuestring);
+        result = sdscatprintf(result, "Author: %s\n", author->valuestring);
     if (version)
-        mcp_tool_call_result_add_textf(r, "Version: %d\n", version->valueint);
+        result = sdscatprintf(result, "Version: %d\n", version->valueint);
     if (created_on)
-        mcp_tool_call_result_add_textf(r, "Created: %s\n", created_on->valuestring);
+        result = sdscatprintf(result, "Created: %s\n", created_on->valuestring);
     if (updated_on)
-        mcp_tool_call_result_add_textf(r, "Updated: %s\n", updated_on->valuestring);
+        result = sdscatprintf(result, "Updated: %s\n", updated_on->valuestring);
     if (text) {
-        mcp_tool_call_result_add_text(r, "\nContent:\n");
-        mcp_tool_call_result_add_textf(r, "%s\n", text->valuestring);
+        result = sdscat(result, "\nContent:\n");
+        result = sdscatprintf(result, "%s\n", text->valuestring);
     }
 
     cJSON_Delete(json);
+
+    mcp_tool_call_result_add_text(r, result);
+    sdsfree(result);
     return r;
 }
 
@@ -1282,6 +1315,7 @@ static McpToolCallResult* list_wiki_pages_handler(cJSON* params)
     }
 
     cJSON* page = NULL;
+    sds result = sdsempty();
     cJSON_ArrayForEach(page, wiki_pages) {
         cJSON* title = cJSON_Select(page, ".title:s");
         cJSON* version = cJSON_Select(page, ".version:n");
@@ -1289,17 +1323,20 @@ static McpToolCallResult* list_wiki_pages_handler(cJSON* params)
         cJSON* updated_on = cJSON_Select(page, ".updated_on:s");
 
         if (title)
-            mcp_tool_call_result_add_textf(r, "Title: %s\n", title->valuestring);
+            result = sdscatprintf(result, "Title: %s\n", title->valuestring);
         if (version)
-            mcp_tool_call_result_add_textf(r, "  Version: %d\n", version->valueint);
+            result = sdscatprintf(result, "  Version: %d\n", version->valueint);
         if (created_on)
-            mcp_tool_call_result_add_textf(r, "  Created: %s\n", created_on->valuestring);
+            result = sdscatprintf(result, "  Created: %s\n", created_on->valuestring);
         if (updated_on)
-            mcp_tool_call_result_add_textf(r, "  Updated: %s\n", updated_on->valuestring);
-        mcp_tool_call_result_add_text(r, "\n");
+            result = sdscatprintf(result, "  Updated: %s\n", updated_on->valuestring);
+        result = sdscat(result, "\n");
     }
 
     cJSON_Delete(json);
+
+    mcp_tool_call_result_add_text(r, result);
+    sdsfree(result);
     return r;
 }
 
@@ -1373,19 +1410,22 @@ static McpToolCallResult* list_time_entries_handler(cJSON* params)
         return r;
     }
 
+    sds result = sdsempty();
+
     cJSON* total_count = cJSON_Select(json, ".total_count:n");
     if (total_count)
-        mcp_tool_call_result_add_textf(r, "Total: %d\n", total_count->valueint);
+        result = sdscatprintf(result, "Total: %d\n", total_count->valueint);
 
     cJSON* off = cJSON_Select(json, ".offset:n");
     if (off)
-        mcp_tool_call_result_add_textf(r, "Offset: %d\n", off->valueint);
+        result = sdscatprintf(result, "Offset: %d\n", off->valueint);
 
-    mcp_tool_call_result_add_text(r, "\n");
+    result = sdscat(result, "\n");
 
     cJSON* time_entries = cJSON_Select(json, ".time_entries:a");
     if (!time_entries) {
         cJSON_Delete(json);
+        sdsfree(result);
         mcp_tool_call_result_set_error(r);
         mcp_tool_call_result_add_text(r, "No time entries found");
         return r;
@@ -1403,25 +1443,28 @@ static McpToolCallResult* list_time_entries_handler(cJSON* params)
         cJSON* spent_on = cJSON_Select(entry, ".spent_on:s");
 
         if (id)
-            mcp_tool_call_result_add_textf(r, "Entry #%d\n", id->valueint);
+            result = sdscatprintf(result, "Entry #%d\n", id->valueint);
         if (project)
-            mcp_tool_call_result_add_textf(r, "  Project: %s\n", project->valuestring);
+            result = sdscatprintf(result, "  Project: %s\n", project->valuestring);
         if (issue)
-            mcp_tool_call_result_add_textf(r, "  Issue: #%d\n", issue->valueint);
+            result = sdscatprintf(result, "  Issue: #%d\n", issue->valueint);
         if (user)
-            mcp_tool_call_result_add_textf(r, "  User: %s\n", user->valuestring);
+            result = sdscatprintf(result, "  User: %s\n", user->valuestring);
         if (activity)
-            mcp_tool_call_result_add_textf(r, "  Activity: %s\n", activity->valuestring);
+            result = sdscatprintf(result, "  Activity: %s\n", activity->valuestring);
         if (hours)
-            mcp_tool_call_result_add_textf(r, "  Hours: %.2f\n", hours->valuedouble);
+            result = sdscatprintf(result, "  Hours: %.2f\n", hours->valuedouble);
         if (comments)
-            mcp_tool_call_result_add_textf(r, "  Comments: %s\n", comments->valuestring);
+            result = sdscatprintf(result, "  Comments: %s\n", comments->valuestring);
         if (spent_on)
-            mcp_tool_call_result_add_textf(r, "  Date: %s\n", spent_on->valuestring);
-        mcp_tool_call_result_add_text(r, "\n");
+            result = sdscatprintf(result, "  Date: %s\n", spent_on->valuestring);
+        result = sdscat(result, "\n");
     }
 
     cJSON_Delete(json);
+
+    mcp_tool_call_result_add_text(r, result);
+    sdsfree(result);
     return r;
 }
 
@@ -1499,46 +1542,50 @@ static McpToolCallResult* get_project_handler(cJSON* params)
     cJSON* updated_on = cJSON_Select(project, ".updated_on:s");
     cJSON* status = cJSON_Select(project, ".status:n");
 
+    sds result = sdsempty();
     if (id)
-        mcp_tool_call_result_add_textf(r, "ID: %d\n", id->valueint);
+        result = sdscatprintf(result, "ID: %d\n", id->valueint);
     if (name)
-        mcp_tool_call_result_add_textf(r, "Name: %s\n", name->valuestring);
+        result = sdscatprintf(result, "Name: %s\n", name->valuestring);
     if (identifier)
-        mcp_tool_call_result_add_textf(r, "Identifier: %s\n", identifier->valuestring);
+        result = sdscatprintf(result, "Identifier: %s\n", identifier->valuestring);
     if (description)
-        mcp_tool_call_result_add_textf(r, "Description: %s\n", description->valuestring);
+        result = sdscatprintf(result, "Description: %s\n", description->valuestring);
     if (status)
-        mcp_tool_call_result_add_textf(r, "Status: %d\n", status->valueint);
+        result = sdscatprintf(result, "Status: %d\n", status->valueint);
     if (created_on)
-        mcp_tool_call_result_add_textf(r, "Created: %s\n", created_on->valuestring);
+        result = sdscatprintf(result, "Created: %s\n", created_on->valuestring);
     if (updated_on)
-        mcp_tool_call_result_add_textf(r, "Updated: %s\n", updated_on->valuestring);
+        result = sdscatprintf(result, "Updated: %s\n", updated_on->valuestring);
 
     cJSON* trackers = cJSON_Select(project, ".trackers:a");
     if (trackers && cJSON_GetArraySize(trackers) > 0) {
-        mcp_tool_call_result_add_text(r, "\nTrackers:\n");
+        result = sdscat(result, "\nTrackers:\n");
         cJSON* tracker = NULL;
         cJSON_ArrayForEach(tracker, trackers) {
             cJSON* tracker_id = cJSON_Select(tracker, ".id:n");
             cJSON* tracker_name = cJSON_Select(tracker, ".name:s");
             if (tracker_id && tracker_name)
-                mcp_tool_call_result_add_textf(r, "  - #%d: %s\n", tracker_id->valueint, tracker_name->valuestring);
+                result = sdscatprintf(result, "  - #%d: %s\n", tracker_id->valueint, tracker_name->valuestring);
         }
     }
 
     cJSON* categories = cJSON_Select(project, ".issue_categories:a");
     if (categories && cJSON_GetArraySize(categories) > 0) {
-        mcp_tool_call_result_add_text(r, "\nIssue Categories:\n");
+        result = sdscat(result, "\nIssue Categories:\n");
         cJSON* category = NULL;
         cJSON_ArrayForEach(category, categories) {
             cJSON* cat_id = cJSON_Select(category, ".id:n");
             cJSON* cat_name = cJSON_Select(category, ".name:s");
             if (cat_id && cat_name)
-                mcp_tool_call_result_add_textf(r, "  - #%d: %s\n", cat_id->valueint, cat_name->valuestring);
+                result = sdscatprintf(result, "  - #%d: %s\n", cat_id->valueint, cat_name->valuestring);
         }
     }
 
     cJSON_Delete(json);
+
+    mcp_tool_call_result_add_text(r, result);
+    sdsfree(result);
     return r;
 }
 
@@ -1601,24 +1648,28 @@ static McpToolCallResult* get_user_handler(cJSON* params)
     cJSON* last_login_on = cJSON_Select(user, ".last_login_on:s");
     cJSON* status = cJSON_Select(user, ".status:n");
 
+    sds result = sdsempty();
     if (id)
-        mcp_tool_call_result_add_textf(r, "ID: %d\n", id->valueint);
+        result = sdscatprintf(result, "ID: %d\n", id->valueint);
     if (login)
-        mcp_tool_call_result_add_textf(r, "Login: %s\n", login->valuestring);
+        result = sdscatprintf(result, "Login: %s\n", login->valuestring);
     if (firstname)
-        mcp_tool_call_result_add_textf(r, "First Name: %s\n", firstname->valuestring);
+        result = sdscatprintf(result, "First Name: %s\n", firstname->valuestring);
     if (lastname)
-        mcp_tool_call_result_add_textf(r, "Last Name: %s\n", lastname->valuestring);
+        result = sdscatprintf(result, "Last Name: %s\n", lastname->valuestring);
     if (mail)
-        mcp_tool_call_result_add_textf(r, "Email: %s\n", mail->valuestring);
+        result = sdscatprintf(result, "Email: %s\n", mail->valuestring);
     if (status)
-        mcp_tool_call_result_add_textf(r, "Status: %d\n", status->valueint);
+        result = sdscatprintf(result, "Status: %d\n", status->valueint);
     if (created_on)
-        mcp_tool_call_result_add_textf(r, "Created: %s\n", created_on->valuestring);
+        result = sdscatprintf(result, "Created: %s\n", created_on->valuestring);
     if (last_login_on)
-        mcp_tool_call_result_add_textf(r, "Last Login: %s\n", last_login_on->valuestring);
+        result = sdscatprintf(result, "Last Login: %s\n", last_login_on->valuestring);
 
     cJSON_Delete(json);
+
+    mcp_tool_call_result_add_text(r, result);
+    sdsfree(result);
     return r;
 }
 

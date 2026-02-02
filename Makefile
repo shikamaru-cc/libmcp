@@ -26,8 +26,8 @@ build/sds.o: sds.c sds.h | build
 build/hello: examples/hello.c build/libmcp.o build/cJSON.o | build
 	$(CC) $(CFLAGS) -I. examples/hello.c build/libmcp.o build/cJSON.o -o build/hello
 
-build/redmine: examples/redmine.c build/libmcp.o build/cJSON.o build/stb.o | build
-	$(CC) $(CFLAGS) $(CURL_CFLAGS) -I. examples/redmine.c build/libmcp.o build/cJSON.o build/stb.o $(CURL_LIBS) -lm -o build/redmine
+build/redmine: examples/redmine.c build/libmcp.o build/cJSON.o build/stb.o build/sds.o | build
+	$(CC) $(CFLAGS) $(CURL_CFLAGS) -I. examples/redmine.c build/libmcp.o build/cJSON.o build/stb.o build/sds.o $(CURL_LIBS) -lm -o build/redmine
 
 clean:
 	rm -rf build
