@@ -331,10 +331,10 @@ static void mcp_tool_call_result_add_content(McpToolCallResult* r, McpContentIte
     if (r->head == NULL)
         r->head = i;
 
-    if (r->tail == NULL)
-        r->tail = i;
-    else
+    if (r->tail)
         r->tail->next = i;
+
+    r->tail = i;
 }
 
 static void mcp_content_item_delete(McpContentItem* i)

@@ -100,12 +100,12 @@ static McpToolCallResult* list_projects_handler(cJSON* params)
         cJSON* name = cJSON_Select(project, ".name:s");
         cJSON* identifier = cJSON_Select(project, ".identifier:s");
         cJSON* description = cJSON_Select(project, ".description:s");
-        if (!id || !name || !identifier || !description)
-            continue;
-
         mcp_tool_call_result_add_textf(r,
             "ID: %d\nName: %s\nIdentifier: %s\nDescription: %s\n",
-            id, name, identifier, description);
+            id ? id->valueint : 0,
+            name ? name->valuestring : "N/A",
+            identifier ? identifier->valuestring : "N/A",
+            description ? description->valuestring: "N/A");
     }
 
     cJSON_Delete(json);
