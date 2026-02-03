@@ -101,6 +101,70 @@ static McpTool tool_get_max_item = {
     },
 };
 
+static McpToolCallResult* get_updates_handler(cJSON* params)
+{
+    (void)params;
+
+    McpToolCallResult* r = mcp_tool_call_result_create();
+    if (!r)
+        return NULL;
+
+    cJSON* json = hn_get("updates.json");
+    if (!json) {
+        mcp_tool_call_result_set_error(r);
+        mcp_tool_call_result_add_text(r, "Failed to fetch updates from HackerNews");
+        return r;
+    }
+
+    sds result = sdsempty();
+
+    cJSON* items = cJSON_Select(json, ".items:a");
+    if (items) {
+        result = sdscat(result, "Recent item changes:\n");
+        cJSON* item = NULL;
+        int count = 0;
+        cJSON_ArrayForEach(item, items) {
+            if (cJSON_IsNumber(item) && count < 20) {
+                result = sdscatprintf(result, "  - Item #%d\n", item->valueint);
+                count++;
+            }
+        }
+    }
+
+    cJSON* profiles = cJSON_Select(json, ".profiles:a");
+    if (profiles) {
+        result = sdscat(result, "\nRecent profile changes:\n");
+        cJSON* profile = NULL;
+        int count = 0;
+        cJSON_ArrayForEach(profile, profiles) {
+            if (cJSON_IsString(profile) && count < 20) {
+                result = sdscatprintf(result, "  - %s\n", profile->valuestring);
+                count++;
+            }
+        }
+    }
+
+    cJSON_Delete(json);
+
+    mcp_tool_call_result_add_text(r, result);
+    sdsfree(result);
+    return r;
+}
+
+static McpInputSchema tool_get_updates_schema[] = {
+    mcp_input_schema_null
+};
+
+static McpTool tool_get_updates = {
+    .name = "get_updates",
+    .description = "Get recent item and profile changes on HackerNews",
+    .handler = get_updates_handler,
+    .input_schema = {
+        .type = MCP_INPUT_SCHEMA_TYPE_OBJECT,
+        .properties = tool_get_updates_schema,
+    },
+};
+
 int main(int argc, const char* argv[])
 {
     curl_global_init(CURL_GLOBAL_DEFAULT);
@@ -108,6 +172,7 @@ int main(int argc, const char* argv[])
     mcp_set_name("hackernews-mcp");
     mcp_set_version("1.0.0");
     mcp_add_tool(&tool_get_max_item);
+    mcp_add_tool(&tool_get_updates);
 
     fprintf(stderr, "HackerNews MCP Server running...\n");
     mcp_main(argc, argv);
