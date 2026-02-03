@@ -42,6 +42,7 @@ static cJSON* hn_get(const char* path)
     curl_easy_setopt(curl, CURLOPT_URL, url);
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
 
     CURLcode res = curl_easy_perform(curl);
     if (res != CURLE_OK)
