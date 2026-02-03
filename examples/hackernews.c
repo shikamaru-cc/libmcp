@@ -58,6 +58,80 @@ fail:
     return NULL;
 }
 
+static McpToolCallResult* fetch_stories(const char* endpoint, int limit)
+{
+    McpToolCallResult* r = mcp_tool_call_result_create();
+    if (!r)
+        return NULL;
+
+    cJSON* ids_json = hn_get(endpoint);
+    if (!ids_json) {
+        mcp_tool_call_result_set_error(r);
+        mcp_tool_call_result_add_text(r, "Failed to fetch story IDs from HackerNews");
+        return r;
+    }
+
+    if (!cJSON_IsArray(ids_json)) {
+        cJSON_Delete(ids_json);
+        mcp_tool_call_result_set_error(r);
+        mcp_tool_call_result_add_text(r, "Invalid response: expected array of story IDs");
+        return r;
+    }
+
+    sds result = sdsempty();
+
+    int count = 0;
+    cJSON* id_item = NULL;
+    cJSON_ArrayForEach(id_item, ids_json) {
+        if (count >= limit) break;
+        if (!cJSON_IsNumber(id_item)) continue;
+
+        int story_id = id_item->valueint;
+        char path[128];
+        snprintf(path, sizeof(path), "item/%d.json", story_id);
+
+        cJSON* story_json = hn_get(path);
+        if (!story_json) continue;
+
+        cJSON* id = cJSON_Select(story_json, ".id:n");
+        cJSON* title = cJSON_Select(story_json, ".title:s");
+        cJSON* by = cJSON_Select(story_json, ".by:s");
+        cJSON* score = cJSON_Select(story_json, ".score:n");
+        cJSON* url = cJSON_Select(story_json, ".url:s");
+        cJSON* time = cJSON_Select(story_json, ".time:n");
+
+        if (id && title) {
+            result = sdscatprintf(result, "#%d: %s\n", id->valueint, title->valuestring);
+            if (by)
+                result = sdscatprintf(result, "  Author: %s\n", by->valuestring);
+            if (score)
+                result = sdscatprintf(result, "  Score: %d points\n", score->valueint);
+            if (url)
+                result = sdscatprintf(result, "  URL: %s\n", url->valuestring);
+            if (time) {
+                time_t timestamp = time->valuedouble;
+                char time_str[64];
+                strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", gmtime(&timestamp));
+                result = sdscatprintf(result, "  Time: %s UTC\n", time_str);
+            }
+            result = sdscat(result, "\n");
+            count++;
+        }
+
+        cJSON_Delete(story_json);
+    }
+
+    if (count == 0) {
+        result = sdscat(result, "No stories found\n");
+    }
+
+    cJSON_Delete(ids_json);
+
+    mcp_tool_call_result_add_text(r, result);
+    sdsfree(result);
+    return r;
+}
+
 static McpToolCallResult* get_max_item_handler(cJSON* params)
 {
     (void)params;
@@ -337,6 +411,37 @@ static McpTool tool_get_user = {
     },
 };
 
+static McpToolCallResult* get_top_stories_handler(cJSON* params)
+{
+    int limit = 20;
+    cJSON* limit_json = cJSON_Select(params, ".limit:n");
+    if (limit_json) {
+        limit = limit_json->valueint;
+        if (limit < 1) limit = 20;
+        if (limit > 100) limit = 100;
+    }
+
+    return fetch_stories("topstories.json", limit);
+}
+
+static McpInputSchema tool_get_stories_schema[] = {
+    { .name = "limit",
+      .description = "Maximum number of stories to return (optional, default: 20, max: 100)",
+      .type = MCP_INPUT_SCHEMA_TYPE_NUMBER,
+    },
+    mcp_input_schema_null
+};
+
+static McpTool tool_get_top_stories = {
+    .name = "get_top_stories",
+    .description = "Get top stories from HackerNews",
+    .handler = get_top_stories_handler,
+    .input_schema = {
+        .type = MCP_INPUT_SCHEMA_TYPE_OBJECT,
+        .properties = tool_get_stories_schema,
+    },
+};
+
 int main(int argc, const char* argv[])
 {
     curl_global_init(CURL_GLOBAL_DEFAULT);
@@ -347,6 +452,7 @@ int main(int argc, const char* argv[])
     mcp_add_tool(&tool_get_updates);
     mcp_add_tool(&tool_get_item);
     mcp_add_tool(&tool_get_user);
+    mcp_add_tool(&tool_get_top_stories);
 
     fprintf(stderr, "HackerNews MCP Server running...\n");
     mcp_main(argc, argv);
