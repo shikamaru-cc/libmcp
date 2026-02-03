@@ -534,6 +534,29 @@ static McpTool tool_get_show_stories = {
     },
 };
 
+static McpToolCallResult* get_job_stories_handler(cJSON* params)
+{
+    int limit = 20;
+    cJSON* limit_json = cJSON_Select(params, ".limit:n");
+    if (limit_json) {
+        limit = limit_json->valueint;
+        if (limit < 1) limit = 20;
+        if (limit > 100) limit = 100;
+    }
+
+    return fetch_stories("jobstories.json", limit);
+}
+
+static McpTool tool_get_job_stories = {
+    .name = "get_job_stories",
+    .description = "Get job stories from HackerNews",
+    .handler = get_job_stories_handler,
+    .input_schema = {
+        .type = MCP_INPUT_SCHEMA_TYPE_OBJECT,
+        .properties = tool_get_stories_schema,
+    },
+};
+
 int main(int argc, const char* argv[])
 {
     curl_global_init(CURL_GLOBAL_DEFAULT);
@@ -549,6 +572,7 @@ int main(int argc, const char* argv[])
     mcp_add_tool(&tool_get_best_stories);
     mcp_add_tool(&tool_get_ask_stories);
     mcp_add_tool(&tool_get_show_stories);
+    mcp_add_tool(&tool_get_job_stories);
 
     fprintf(stderr, "HackerNews MCP Server running...\n");
     mcp_main(argc, argv);
