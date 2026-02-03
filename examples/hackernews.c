@@ -259,6 +259,84 @@ static McpTool tool_get_item = {
     },
 };
 
+static McpToolCallResult* get_user_handler(cJSON* params)
+{
+    McpToolCallResult* r = mcp_tool_call_result_create();
+    if (!r)
+        return NULL;
+
+    cJSON* id_json = cJSON_Select(params, ".id:s");
+    if (!id_json) {
+        mcp_tool_call_result_set_error(r);
+        mcp_tool_call_result_add_text(r, "id parameter is required");
+        return r;
+    }
+
+    const char* id = id_json->valuestring;
+    char* id_escaped = curl_easy_escape(NULL, id, 0);
+    char path[256];
+    snprintf(path, sizeof(path), "user/%s.json", id_escaped);
+    curl_free(id_escaped);
+
+    cJSON* json = hn_get(path);
+    if (!json) {
+        mcp_tool_call_result_set_error(r);
+        mcp_tool_call_result_add_text(r, "Failed to fetch user from HackerNews");
+        return r;
+    }
+
+    sds result = sdsempty();
+
+    cJSON* id_field = cJSON_Select(json, ".id:s");
+    cJSON* karma = cJSON_Select(json, ".karma:n");
+    cJSON* created = cJSON_Select(json, ".created:n");
+    cJSON* about = cJSON_Select(json, ".about:s");
+    cJSON* submitted = cJSON_Select(json, ".submitted:a");
+
+    if (id_field)
+        result = sdscatprintf(result, "User: %s\n", id_field->valuestring);
+    if (karma)
+        result = sdscatprintf(result, "  Karma: %d\n", karma->valueint);
+    if (created) {
+        time_t timestamp = created->valuedouble;
+        char time_str[64];
+        strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", gmtime(&timestamp));
+        result = sdscatprintf(result, "  Created: %s UTC\n", time_str);
+    }
+    if (submitted) {
+        int submitted_count = cJSON_GetArraySize(submitted);
+        result = sdscatprintf(result, "  Submitted: ~%d items\n", submitted_count);
+    }
+    if (about) {
+        result = sdscat(result, "\n  About:\n");
+        result = sdscatprintf(result, "  %s\n", about->valuestring);
+    }
+
+    cJSON_Delete(json);
+
+    mcp_tool_call_result_add_text(r, result);
+    sdsfree(result);
+    return r;
+}
+
+static McpInputSchema tool_get_user_schema[] = {
+    { .name = "id",
+      .description = "User ID to fetch",
+      .type = MCP_INPUT_SCHEMA_TYPE_STRING,
+    },
+    mcp_input_schema_null
+};
+
+static McpTool tool_get_user = {
+    .name = "get_user",
+    .description = "Get a HackerNews user profile by ID",
+    .handler = get_user_handler,
+    .input_schema = {
+        .type = MCP_INPUT_SCHEMA_TYPE_OBJECT,
+        .properties = tool_get_user_schema,
+    },
+};
+
 int main(int argc, const char* argv[])
 {
     curl_global_init(CURL_GLOBAL_DEFAULT);
@@ -268,6 +346,7 @@ int main(int argc, const char* argv[])
     mcp_add_tool(&tool_get_max_item);
     mcp_add_tool(&tool_get_updates);
     mcp_add_tool(&tool_get_item);
+    mcp_add_tool(&tool_get_user);
 
     fprintf(stderr, "HackerNews MCP Server running...\n");
     mcp_main(argc, argv);
