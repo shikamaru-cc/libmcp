@@ -3,10 +3,11 @@ CFLAGS = -g -Wall -Wextra -O2
 CURL_CFLAGS = $(shell curl-config --cflags)
 CURL_LIBS = $(shell curl-config --libs)
 
-all: build/hello build/redmine
+all: build/hello build/redmine build/hackernews
 
 hello: build/hello
 redmine: build/redmine
+hackernews: build/hackernews
 
 build:
 	mkdir -p build
@@ -28,6 +29,9 @@ build/hello: examples/hello.c build/libmcp.o build/cJSON.o | build
 
 build/redmine: examples/redmine.c build/libmcp.o build/cJSON.o build/stb.o build/sds.o | build
 	$(CC) $(CFLAGS) $(CURL_CFLAGS) -I. examples/redmine.c build/libmcp.o build/cJSON.o build/stb.o build/sds.o $(CURL_LIBS) -lm -o build/redmine
+
+build/hackernews: examples/hackernews.c build/libmcp.o build/cJSON.o build/sds.o | build
+	$(CC) $(CFLAGS) $(CURL_CFLAGS) -I. examples/hackernews.c build/libmcp.o build/cJSON.o build/sds.o $(CURL_LIBS) -o build/hackernews
 
 clean:
 	rm -rf build
