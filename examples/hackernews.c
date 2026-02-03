@@ -165,6 +165,100 @@ static McpTool tool_get_updates = {
     },
 };
 
+static McpToolCallResult* get_item_handler(cJSON* params)
+{
+    McpToolCallResult* r = mcp_tool_call_result_create();
+    if (!r)
+        return NULL;
+
+    cJSON* id_json = cJSON_Select(params, ".id:n");
+    if (!id_json) {
+        mcp_tool_call_result_set_error(r);
+        mcp_tool_call_result_add_text(r, "id parameter is required");
+        return r;
+    }
+
+    int id = id_json->valueint;
+    char path[128];
+    snprintf(path, sizeof(path), "item/%d.json", id);
+
+    cJSON* json = hn_get(path);
+    if (!json) {
+        mcp_tool_call_result_set_error(r);
+        mcp_tool_call_result_add_text(r, "Failed to fetch item from HackerNews");
+        return r;
+    }
+
+    sds result = sdsempty();
+
+    cJSON* id_field = cJSON_Select(json, ".id:n");
+    cJSON* type = cJSON_Select(json, ".type:s");
+    cJSON* by = cJSON_Select(json, ".by:s");
+    cJSON* time = cJSON_Select(json, ".time:n");
+    cJSON* score = cJSON_Select(json, ".score:n");
+    cJSON* title = cJSON_Select(json, ".title:s");
+    cJSON* url = cJSON_Select(json, ".url:s");
+    cJSON* text = cJSON_Select(json, ".text:s");
+    cJSON* parent = cJSON_Select(json, ".parent:n");
+    cJSON* descendants = cJSON_Select(json, ".descendants:n");
+
+    if (id_field)
+        result = sdscatprintf(result, "#%d", id_field->valueint);
+
+    if (title) {
+        result = sdscatprintf(result, ": %s\n", title->valuestring);
+    } else {
+        result = sdscat(result, "\n");
+    }
+
+    if (type)
+        result = sdscatprintf(result, "  Type: %s\n", type->valuestring);
+    if (by)
+        result = sdscatprintf(result, "  Author: %s\n", by->valuestring);
+    if (score)
+        result = sdscatprintf(result, "  Score: %d points\n", score->valueint);
+    if (url)
+        result = sdscatprintf(result, "  URL: %s\n", url->valuestring);
+    if (descendants)
+        result = sdscatprintf(result, "  Comments: %d\n", descendants->valueint);
+    if (parent)
+        result = sdscatprintf(result, "  Parent: #%d\n", parent->valueint);
+    if (time) {
+        time_t timestamp = time->valuedouble;
+        char time_str[64];
+        strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", gmtime(&timestamp));
+        result = sdscatprintf(result, "  Time: %s UTC\n", time_str);
+    }
+    if (text) {
+        result = sdscat(result, "\n  Text:\n");
+        result = sdscatprintf(result, "  %s\n", text->valuestring);
+    }
+
+    cJSON_Delete(json);
+
+    mcp_tool_call_result_add_text(r, result);
+    sdsfree(result);
+    return r;
+}
+
+static McpInputSchema tool_get_item_schema[] = {
+    { .name = "id",
+      .description = "Item ID to fetch",
+      .type = MCP_INPUT_SCHEMA_TYPE_NUMBER,
+    },
+    mcp_input_schema_null
+};
+
+static McpTool tool_get_item = {
+    .name = "get_item",
+    .description = "Get a HackerNews item (story, comment, etc.) by ID",
+    .handler = get_item_handler,
+    .input_schema = {
+        .type = MCP_INPUT_SCHEMA_TYPE_OBJECT,
+        .properties = tool_get_item_schema,
+    },
+};
+
 int main(int argc, const char* argv[])
 {
     curl_global_init(CURL_GLOBAL_DEFAULT);
@@ -173,6 +267,7 @@ int main(int argc, const char* argv[])
     mcp_set_version("1.0.0");
     mcp_add_tool(&tool_get_max_item);
     mcp_add_tool(&tool_get_updates);
+    mcp_add_tool(&tool_get_item);
 
     fprintf(stderr, "HackerNews MCP Server running...\n");
     mcp_main(argc, argv);
