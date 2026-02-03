@@ -58,12 +58,56 @@ fail:
     return NULL;
 }
 
+static McpToolCallResult* get_max_item_handler(cJSON* params)
+{
+    (void)params;
+
+    McpToolCallResult* r = mcp_tool_call_result_create();
+    if (!r)
+        return NULL;
+
+    cJSON* json = hn_get("maxitem.json");
+    if (!json) {
+        mcp_tool_call_result_set_error(r);
+        mcp_tool_call_result_add_text(r, "Failed to fetch max item from HackerNews");
+        return r;
+    }
+
+    sds result = sdsempty();
+    if (cJSON_IsNumber(json)) {
+        result = sdscatprintf(result, "Current max item ID: %d\n", json->valueint);
+    } else {
+        result = sdscat(result, "Unexpected response format\n");
+    }
+
+    cJSON_Delete(json);
+
+    mcp_tool_call_result_add_text(r, result);
+    sdsfree(result);
+    return r;
+}
+
+static McpInputSchema tool_get_max_item_schema[] = {
+    mcp_input_schema_null
+};
+
+static McpTool tool_get_max_item = {
+    .name = "get_max_item",
+    .description = "Get the current largest item ID on HackerNews",
+    .handler = get_max_item_handler,
+    .input_schema = {
+        .type = MCP_INPUT_SCHEMA_TYPE_OBJECT,
+        .properties = tool_get_max_item_schema,
+    },
+};
+
 int main(int argc, const char* argv[])
 {
     curl_global_init(CURL_GLOBAL_DEFAULT);
 
     mcp_set_name("hackernews-mcp");
     mcp_set_version("1.0.0");
+    mcp_add_tool(&tool_get_max_item);
 
     fprintf(stderr, "HackerNews MCP Server running...\n");
     mcp_main(argc, argv);
