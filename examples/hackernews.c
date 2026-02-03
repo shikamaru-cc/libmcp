@@ -557,6 +557,211 @@ static McpTool tool_get_job_stories = {
     },
 };
 
+static void format_comment_prefix(int* indices, int depth, sds* prefix)
+{
+    *prefix = sdsempty();
+    for (int i = 0; i <= depth; i++) {
+        *prefix = sdscatprintf(*prefix, "%d.", indices[i]);
+        if (i < depth) {
+            *prefix = sdscat(*prefix, " ");
+        }
+    }
+}
+
+static void append_comment_recursive(cJSON* item, int depth, int max_depth,
+                                     int* indices, sds* result,
+                                     int* count, int* total_fetched)
+{
+    cJSON* by = cJSON_Select(item, ".by:s");
+    cJSON* text = cJSON_Select(item, ".text:s");
+    cJSON* time = cJSON_Select(item, ".time:n");
+    cJSON* kids = cJSON_Select(item, ".kids:a");
+
+    sds prefix = sdsempty();
+    format_comment_prefix(indices, depth, &prefix);
+
+    const char* author = by ? by->valuestring : "[deleted]";
+    *result = sdscatprintf(*result, "%s %s", prefix, author);
+
+    cJSON* score = cJSON_Select(item, ".score:n");
+    if (score) {
+        *result = sdscatprintf(*result, " (%d points)", score->valueint);
+    }
+    *result = sdscat(*result, "\n");
+
+    if (time) {
+        time_t timestamp = time->valuedouble;
+        char time_str[64];
+        strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", gmtime(&timestamp));
+        *result = sdscatprintf(*result, "    %s UTC\n", time_str);
+    }
+
+    if (text) {
+        *result = sdscat(*result, "    ");
+        const char* p = text->valuestring;
+        while (*p) {
+            if (*p == '\n') {
+                *result = sdscat(*result, "\n    ");
+            } else {
+                *result = sdscatlen(*result, p, 1);
+            }
+            p++;
+        }
+        *result = sdscat(*result, "\n");
+    }
+    *result = sdscat(*result, "\n");
+
+    sdsfree(prefix);
+    (*count)++;
+
+    if (kids && depth < max_depth - 1) {
+        int reply_count = 0;
+        cJSON* kid = NULL;
+        cJSON_ArrayForEach(kid, kids) {
+            if (!cJSON_IsNumber(kid)) continue;
+            if (reply_count >= 10) break;
+
+            int kid_id = kid->valueint;
+            char path[128];
+            snprintf(path, sizeof(path), "item/%d.json", kid_id);
+
+            cJSON* kid_json = hn_get(path);
+            if (!kid_json) continue;
+
+            indices[depth + 1] = reply_count + 1;
+            append_comment_recursive(kid_json, depth + 1, max_depth,
+                                    indices, result, count, total_fetched);
+            cJSON_Delete(kid_json);
+            reply_count++;
+        }
+    }
+}
+
+static McpToolCallResult* get_comments_handler(cJSON* params)
+{
+    McpToolCallResult* r = mcp_tool_call_result_create();
+    if (!r)
+        return NULL;
+
+    cJSON* story_id_json = cJSON_Select(params, ".story_id:n");
+    if (!story_id_json) {
+        mcp_tool_call_result_set_error(r);
+        mcp_tool_call_result_add_text(r, "story_id parameter is required");
+        return r;
+    }
+
+    int story_id = story_id_json->valueint;
+
+    int max_depth = 3;
+    cJSON* max_depth_json = cJSON_Select(params, ".max_depth:n");
+    if (max_depth_json) {
+        max_depth = max_depth_json->valueint;
+        if (max_depth < 1) max_depth = 1;
+        if (max_depth > 6) max_depth = 6;
+    }
+
+    int limit = 20;
+    cJSON* limit_json = cJSON_Select(params, ".limit:n");
+    if (limit_json) {
+        limit = limit_json->valueint;
+        if (limit < 1) limit = 20;
+        if (limit > 100) limit = 100;
+    }
+
+    char path[128];
+    snprintf(path, sizeof(path), "item/%d.json", story_id);
+
+    cJSON* story_json = hn_get(path);
+    if (!story_json) {
+        mcp_tool_call_result_set_error(r);
+        mcp_tool_call_result_add_text(r, "Failed to fetch story from HackerNews");
+        return r;
+    }
+
+    sds result = sdsempty();
+
+    cJSON* title = cJSON_Select(story_json, ".title:s");
+    if (title) {
+        result = sdscatprintf(result, "Comments for Story #%d: %s\n\n",
+                              story_id, title->valuestring);
+    } else {
+        result = sdscatprintf(result, "Comments for Story #%d\n\n", story_id);
+    }
+
+    cJSON* kids = cJSON_Select(story_json, ".kids:a");
+    if (!kids || cJSON_GetArraySize(kids) == 0) {
+        result = sdscat(result, "No comments\n");
+        cJSON_Delete(story_json);
+        mcp_tool_call_result_add_text(r, result);
+        sdsfree(result);
+        return r;
+    }
+
+    int indices[7] = {0};
+    int count = 0;
+    int total_fetched = 0;
+    int kid_count = 0;
+
+    cJSON* kid = NULL;
+    cJSON_ArrayForEach(kid, kids) {
+        if (kid_count >= limit) break;
+        if (!cJSON_IsNumber(kid)) continue;
+
+        int kid_id = kid->valueint;
+        char kid_path[128];
+        snprintf(kid_path, sizeof(kid_path), "item/%d.json", kid_id);
+
+        cJSON* kid_json = hn_get(kid_path);
+        if (!kid_json) continue;
+
+        indices[0] = kid_count + 1;
+        append_comment_recursive(kid_json, 0, max_depth, indices,
+                                &result, &count, &total_fetched);
+        cJSON_Delete(kid_json);
+        kid_count++;
+    }
+
+    int total_comments = cJSON_GetArraySize(kids);
+    if (total_comments > limit) {
+        result = sdscatprintf(result, "(%d comments displayed, %d total)\n",
+                              count, total_comments);
+    } else {
+        result = sdscatprintf(result, "(%d comments)\n", count);
+    }
+
+    cJSON_Delete(story_json);
+
+    mcp_tool_call_result_add_text(r, result);
+    sdsfree(result);
+    return r;
+}
+
+static McpInputSchema tool_get_comments_schema[] = {
+    { .name = "story_id",
+      .description = "Story ID to fetch comments for",
+      .type = MCP_INPUT_SCHEMA_TYPE_NUMBER,
+    },
+    { .name = "max_depth",
+      .description = "Maximum comment nesting depth (1-6, default: 3)",
+      .type = MCP_INPUT_SCHEMA_TYPE_NUMBER,
+    },
+    { .name = "limit",
+      .description = "Maximum top-level comments to fetch (default: 20, max: 100)",
+      .type = MCP_INPUT_SCHEMA_TYPE_NUMBER,
+    },
+    mcp_input_schema_null
+};
+
+static McpTool tool_get_comments = {
+    .name = "get_comments",
+    .description = "Get comments for a HackerNews story with nested replies",
+    .handler = get_comments_handler,
+    .input_schema = {
+        .type = MCP_INPUT_SCHEMA_TYPE_OBJECT,
+        .properties = tool_get_comments_schema,
+    },
+};
+
 int main(int argc, const char* argv[])
 {
     curl_global_init(CURL_GLOBAL_DEFAULT);
@@ -573,6 +778,7 @@ int main(int argc, const char* argv[])
     mcp_add_tool(&tool_get_ask_stories);
     mcp_add_tool(&tool_get_show_stories);
     mcp_add_tool(&tool_get_job_stories);
+    mcp_add_tool(&tool_get_comments);
 
     fprintf(stderr, "HackerNews MCP Server running...\n");
     mcp_main(argc, argv);
