@@ -49,8 +49,8 @@ make clean
 static McpToolCallResult* add_handler(cJSON* params)
 {
     McpToolCallResult* r = mcp_tool_call_result_create();
-    cJSON* a = cJSON_GetObjectItem(params, "a:n");
-    cJSON* b = cJSON_GetObjectItem(params, "b:n");
+    cJSON* a = cJSON_Select(params, "a:n");
+    cJSON* b = cJSON_Select(params, "b:n");
 
     if (!a || !b) {
         mcp_tool_call_result_set_error(r);
@@ -99,11 +99,8 @@ Basic example with simple tools (add, multiply, weather).
 ```
 
 ### redmine
-MCP server for Redmine project management. Tools include:
-- List projects, issues, wiki pages
-- Create issues and add notes
-- Search wiki and list activities
-- Time entry tracking
+
+MCP server for Redmine project management.
 
 #### Configuration
 
