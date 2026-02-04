@@ -105,15 +105,76 @@ MCP server for Redmine project management. Tools include:
 - Search wiki and list activities
 - Time entry tracking
 
-Requires:
-- `REDMINE_URL` - Redmine server URL
-- `REDMINE_API_KEY` - API authentication key
+#### Configuration
+
+**Required Environment Variables:**
+
+1. **REDMINE_URL** - Your Redmine server URL
+   ```bash
+   export REDMINE_URL="https://redmine.example.com"
+   ```
+   - Use the base URL of your Redmine instance
+   - Include the protocol (http:// or https://)
+   - Do not include a trailing slash
+
+2. **REDMINE_API_KEY** - Your Redmine API key
+   ```bash
+   export REDMINE_API_KEY="your-api-key-here"
+   ```
+
+**Getting Your Redmine API Key:**
+
+1. Log in to your Redmine account
+2. Click on **My account** in the top navigation
+3. Go to the **API access key** section
+4. Click **Show** to reveal your API key
+5. Copy the key and use it as the `REDMINE_API_KEY` value
+
+**Building and Running:**
 
 ```bash
+# Build the redmine example
+make redmine
+
+# Set required environment variables
 export REDMINE_URL="https://redmine.example.com"
 export REDMINE_API_KEY="your-api-key"
+
+# Run the server
 ./build/redmine
 ```
+
+**Using with an MCP Client:**
+
+Add the server to your MCP client configuration (e.g., Claude Desktop):
+
+```json
+{
+  "mcpServers": {
+    "redmine": {
+      "command": "/path/to/libmcp/build/redmine",
+      "env": {
+        "REDMINE_URL": "https://redmine.example.com",
+        "REDMINE_API_KEY": "your-api-key"
+      }
+    }
+  }
+}
+```
+
+**Available Tools:**
+
+- `list_projects` - List all Redmine projects
+- `get_project` - Get detailed information about a specific project
+- `list_issues` - List issues with optional filters (project_id, status_id, assigned_to_id, tracker_id, limit, offset)
+- `get_issue` - Get detailed information about a specific issue
+- `create_issue` - Create a new issue (requires: project_id, subject; optional: description, tracker_id, status_id, priority_id, assigned_to_id)
+- `add_issue_note` - Add a note/comment to an existing issue
+- `list_activities` - List user activities from assigned issues (optional: user_id, start_date)
+- `list_wiki_pages` - List all wiki pages in a project
+- `get_wiki_page` - Get a specific wiki page content
+- `search_wiki` - Search wiki pages (q, project_identifier, limit, offset, all_words, titles_only)
+- `list_time_entries` - List time entries with optional filters
 
 ### hackernews
 MCP server for Hacker News. Browse stories and comments.
