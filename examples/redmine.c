@@ -957,6 +957,12 @@ static McpToolCallResult* list_issues_handler(cJSON* params)
             "tracker_id=%d&", tracker_id_json->valueint);
     }
 
+    cJSON* fixed_version_id_json = cJSON_Select(params, ".fixed_version_id:n");
+    if (fixed_version_id_json) {
+        query_len += snprintf(query + query_len, sizeof(query) - query_len,
+            "fixed_version_id=%d&", fixed_version_id_json->valueint);
+    }
+
     char path[1024];
     snprintf(path, sizeof(path), "issues.json?%slimit=%d&offset=%d&sort=updated_on:desc",
         query, limit, offset);
@@ -1035,6 +1041,10 @@ static McpInputSchema tool_list_issues_schema[] = {
     },
     { .name = "tracker_id",
       .description = "Filter by tracker ID (optional)",
+      .type = MCP_INPUT_SCHEMA_TYPE_NUMBER,
+    },
+    { .name = "fixed_version_id",
+      .description = "Filter by fixed version ID (optional, use list_versions to get valid IDs)",
       .type = MCP_INPUT_SCHEMA_TYPE_NUMBER,
     },
     { .name = "limit",
@@ -1702,6 +1712,41 @@ static McpTool tool_create_time_entry = {
     },
 };
 
+static McpToolCallResult* list_versions_handler(cJSON* params)
+{
+    (void)params;
+
+    McpToolCallResult* r = mcp_tool_call_result_create();
+    if (!r)
+        return NULL;
+
+    Version* redmine_versions = redmine_versions_get();
+    if (stb_arr_len(redmine_versions) == 0) {
+        mcp_tool_call_result_set_error(r);
+        mcp_tool_call_result_add_text(r, "No versions available");
+        return r;
+    }
+
+    Project* redmine_projects = redmine_projects_get();
+    sds result = sdsempty();
+    for (int i = 0; i < stb_arr_len(redmine_versions); i++) {
+        Version* v = &redmine_versions[i];
+        const char* project_name = "Unknown";
+        for (int j = 0; j < stb_arr_len(redmine_projects); j++) {
+            if (redmine_projects[j].id == v->project_id) {
+                project_name = redmine_projects[j].name;
+                break;
+            }
+        }
+        result = sdscatprintf(result, "ID: %d - Name: %s (Project: %s)\n", 
+            v->id, v->name, project_name);
+    }
+    mcp_tool_call_result_add_text(r, result);
+    sdsfree(result);
+
+    return r;
+}
+
 static McpToolCallResult* list_time_entry_activities_handler(cJSON* params)
 {
     (void)params;
@@ -1727,6 +1772,20 @@ static McpToolCallResult* list_time_entry_activities_handler(cJSON* params)
 
     return r;
 }
+
+static McpInputSchema tool_list_versions_schema[] = {
+    mcp_input_schema_null
+};
+
+static McpTool tool_list_versions = {
+    .name = "list_versions",
+    .description = "List all available version IDs for filtering issues",
+    .handler = list_versions_handler,
+    .input_schema = {
+        .type = MCP_INPUT_SCHEMA_TYPE_OBJECT,
+        .properties = tool_list_versions_schema,
+    },
+};
 
 static McpInputSchema tool_list_time_entry_activities_schema[] = {
     mcp_input_schema_null
@@ -1939,6 +1998,7 @@ int main(int argc, const char* argv[])
     mcp_set_name("redmine-mcp");
     mcp_set_version("1.0.0");
     mcp_add_tool(&tool_list_projects);
+    mcp_add_tool(&tool_list_versions);
     mcp_add_tool(&tool_list_activities);
     mcp_add_tool(&tool_search_wiki);
     mcp_add_tool(&tool_get_issue);
