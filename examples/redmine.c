@@ -40,12 +40,18 @@ typedef struct {
     int project_id;
 } Version;
 
+typedef struct {
+    int id;
+    char* name;
+} TimeEntryActivity;
+
 static const char* redmine_base_url;
 static const char* redmine_api_key;
 static int redmine_user_id;
 static IssueStatus* redmine_issue_statuses = NULL;
 static Project* redmine_projects = NULL;
 static Version* redmine_versions = NULL;
+static TimeEntryActivity* redmine_time_entry_activities = NULL;
 
 static cJSON* redmine_get(const char* path)
 {
@@ -274,6 +280,40 @@ static void redmine_versions_cleanup()
     stb_arr_free(redmine_versions);
 }
 
+static void redmine_time_entry_activities_init()
+{
+    cJSON* json = redmine_get("enumerations/time_entry_activities.json");
+    if (!json)
+        return;
+
+    cJSON* activities = cJSON_Select(json, ".time_entry_activities:a");
+    if (!activities) {
+        cJSON_Delete(json);
+        return;
+    }
+
+    cJSON* activity = NULL;
+    cJSON_ArrayForEach(activity, activities) {
+        cJSON* id = cJSON_Select(activity, ".id:n");
+        cJSON* name = cJSON_Select(activity, ".name:s");
+        if (id && name) {
+            TimeEntryActivity t;
+            t.id = id->valueint;
+            t.name = strdup(name->valuestring);
+            *stb_arr_add(redmine_time_entry_activities) = t;
+        }
+    }
+
+    cJSON_Delete(json);
+}
+
+static void redmine_time_entry_activities_cleanup()
+{
+    for (int i = 0; i < stb_arr_len(redmine_time_entry_activities); i++)
+        free(redmine_time_entry_activities[i].name);
+    stb_arr_free(redmine_time_entry_activities);
+}
+
 static const char* redmine_status_id_to_name(int id)
 {
     for (int i = 0; i < stb_arr_len(redmine_issue_statuses); i++) {
@@ -300,6 +340,7 @@ static void redmine_init()
     redmine_projects_init();
     redmine_versions_init();
     redmine_issue_statuses_init();
+    redmine_time_entry_activities_init();
 }
 
 static void redmine_cleanup()
@@ -307,6 +348,7 @@ static void redmine_cleanup()
     redmine_versions_cleanup();
     redmine_projects_cleanup();
     redmine_issue_statuses_cleanup();
+    redmine_time_entry_activities_cleanup();
 }
 
 static McpToolCallResult* list_projects_handler(cJSON* params)
@@ -1593,7 +1635,7 @@ static McpInputSchema tool_create_time_entry_schema[] = {
       .type = MCP_INPUT_SCHEMA_TYPE_NUMBER,
     },
     { .name = "activity_id",
-      .description = "Activity ID (required, e.g., 9 for 'Design', 10 for 'Development')",
+      .description = "Activity ID (required, use list_time_entry_activities tool to see available options)",
       .type = MCP_INPUT_SCHEMA_TYPE_NUMBER,
     },
     { .name = "spent_on",
@@ -1614,6 +1656,45 @@ static McpTool tool_create_time_entry = {
     .input_schema = {
         .type = MCP_INPUT_SCHEMA_TYPE_OBJECT,
         .properties = tool_create_time_entry_schema,
+    },
+};
+
+static McpToolCallResult* list_time_entry_activities_handler(cJSON* params)
+{
+    (void)params;
+
+    McpToolCallResult* r = mcp_tool_call_result_create();
+    if (!r)
+        return NULL;
+
+    if (stb_arr_len(redmine_time_entry_activities) == 0) {
+        mcp_tool_call_result_set_error(r);
+        mcp_tool_call_result_add_text(r, "No time entry activities available");
+        return r;
+    }
+
+    sds result = sdsempty();
+    for (int i = 0; i < stb_arr_len(redmine_time_entry_activities); i++) {
+        TimeEntryActivity* a = &redmine_time_entry_activities[i];
+        result = sdscatprintf(result, "ID: %d - Name: %s\n", a->id, a->name);
+    }
+    mcp_tool_call_result_add_text(r, result);
+    sdsfree(result);
+
+    return r;
+}
+
+static McpInputSchema tool_list_time_entry_activities_schema[] = {
+    mcp_input_schema_null
+};
+
+static McpTool tool_list_time_entry_activities = {
+    .name = "list_time_entry_activities",
+    .description = "List all available time entry activity IDs for create_time_entry",
+    .handler = list_time_entry_activities_handler,
+    .input_schema = {
+        .type = MCP_INPUT_SCHEMA_TYPE_OBJECT,
+        .properties = tool_list_time_entry_activities_schema,
     },
 };
 
@@ -1823,6 +1904,7 @@ int main(int argc, const char* argv[])
     mcp_add_tool(&tool_get_wiki_page);
     mcp_add_tool(&tool_list_wiki_pages);
     mcp_add_tool(&tool_list_time_entries);
+    mcp_add_tool(&tool_list_time_entry_activities);
     mcp_add_tool(&tool_create_time_entry);
     mcp_add_tool(&tool_get_project);
     mcp_add_tool(&tool_get_user);
