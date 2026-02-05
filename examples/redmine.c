@@ -73,6 +73,23 @@ fail:
     return NULL;
 }
 
+static cJSON* redmine_get_with_opts(const char* path, char** optlist, int optnum)
+{
+    sds fullpath = sdsnew(path);
+    if (optnum) fullpath = sdscatlen(fullpath, "?", 1);
+    for (int j = 0; j < optnum; j++) {
+        if (j > 0) fullpath = sdscatlen(fullpath,"&",1);
+        fullpath = sdscat(fullpath,optlist[j*2]);
+        fullpath = sdscatlen(fullpath,"=",1);
+        char *escaped = curl_easy_escape(NULL,optlist[j*2+1],strlen(optlist[j*2+1]));
+        fullpath = sdscat(fullpath,escaped);
+        curl_free(escaped);
+    }
+    cJSON* json = redmine_get(fullpath);
+    sdsfree(fullpath);
+    return json;
+}
+
 static cJSON* redmine_post(const char* path, const char* data)
 {
     CURL* curl = NULL;
