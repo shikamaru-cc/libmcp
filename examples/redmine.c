@@ -25,18 +25,6 @@ static size_t write_callback(void* contents, size_t size, size_t nmemb, void* us
 typedef struct {
     int id;
     char* name;
-} IssueStatus;
-
-typedef struct {
-    int id;
-    char* name;
-    char* identifier;
-    char* description;
-} Project;
-
-typedef struct {
-    int id;
-    char* name;
     int project_id;
 } Version;
 
@@ -48,8 +36,6 @@ typedef struct {
 static const char* redmine_base_url;
 static const char* redmine_api_key;
 static int redmine_user_id;
-static IssueStatus* redmine_issue_statuses = NULL;
-static Project* redmine_projects = NULL;
 static Version* redmine_versions = NULL;
 static TimeEntryActivity* redmine_time_entry_activities = NULL;
 
@@ -150,16 +136,30 @@ fail:
     return NULL;
 }
 
-static void redmine_issue_statuses_init()
+/*
+ * Issues statuses
+ */
+
+typedef struct {
+    int id;
+    char* name;
+} IssueStatus;
+
+static IssueStatus* redmine_issue_statuses_instance = NULL;
+
+static IssueStatus* redmine_issue_statuses_get()
 {
+    if (redmine_issue_statuses_instance)
+        return redmine_issue_statuses_instance;
+
     cJSON* json = redmine_get("issue_statuses.json");
     if (!json)
-        return;
+        return NULL;
 
     cJSON* statuses = cJSON_Select(json, ".issue_statuses:a");
     if (!statuses) {
         cJSON_Delete(json);
-        return;
+        return NULL;
     }
 
     cJSON* status = NULL;
@@ -170,23 +170,58 @@ static void redmine_issue_statuses_init()
             IssueStatus i;
             i.id = id->valueint;
             i.name = strdup(name->valuestring);
-            *stb_arr_add(redmine_issue_statuses) = i;
+            *stb_arr_add(redmine_issue_statuses_instance) = i;
         }
     }
 
     cJSON_Delete(json);
+    return redmine_issue_statuses_instance;
 }
 
-static void redmine_projects_init()
+static void redmine_issue_statuses_cleanup()
 {
+    if (!redmine_issue_statuses_instance) return;
+    for (int i = 0; i < stb_arr_len(redmine_issue_statuses_instance); i++)
+        free(redmine_issue_statuses_instance[i].name);
+    stb_arr_free(redmine_issue_statuses_instance);
+}
+
+static const char* redmine_status_id_to_name(int id)
+{
+    IssueStatus* redmine_issue_statuses = redmine_issue_statuses_get();
+    for (int i = 0; i < stb_arr_len(redmine_issue_statuses); i++) {
+        if (redmine_issue_statuses[i].id == id)
+            return redmine_issue_statuses[i].name;
+    }
+    return NULL;
+}
+
+/*
+ * Projects
+ */
+
+typedef struct {
+    int id;
+    char* name;
+    char* identifier;
+    char* description;
+} Project;
+
+static Project* redmine_projects_instance = NULL;
+
+static Project* redmine_projects_get()
+{
+    if (redmine_projects_instance)
+        return redmine_projects_instance;
+
     cJSON* json = redmine_get("projects.json");
     if (!json)
-        return;
+        return NULL;
 
     cJSON* projects = cJSON_Select(json, ".projects:a");
     if (!projects) {
         cJSON_Delete(json);
-        return;
+        return NULL;
     }
 
     cJSON* project = NULL;
@@ -201,15 +236,17 @@ static void redmine_projects_init()
             p.name = strdup(name->valuestring);
             p.identifier = strdup(identifier->valuestring);
             p.description = description ? strdup(description->valuestring) : NULL;
-            *stb_arr_add(redmine_projects) = p;
+            *stb_arr_add(redmine_projects_instance) = p;
         }
     }
 
     cJSON_Delete(json);
+    return redmine_projects_instance;
 }
 
 static void redmine_versions_init()
 {
+    Project* redmine_projects = redmine_projects_get();
     for (int i = 0; i < stb_arr_len(redmine_projects); i++) {
         char path[256];
         snprintf(path, sizeof(path), "projects/%d/versions.json", redmine_projects[i].id);
@@ -255,22 +292,16 @@ static void redmine_user_id_init()
     cJSON_Delete(json);
 }
 
-static void redmine_issue_statuses_cleanup()
-{
-    for (int i = 0; i < stb_arr_len(redmine_issue_statuses); i++)
-        free(redmine_issue_statuses[i].name);
-    stb_arr_free(redmine_issue_statuses);
-}
-
 static void redmine_projects_cleanup()
 {
-    for (int i = 0; i < stb_arr_len(redmine_projects); i++) {
-        free(redmine_projects[i].name);
-        free(redmine_projects[i].identifier);
-        if (redmine_projects[i].description)
-            free(redmine_projects[i].description);
+    if (!redmine_projects_instance) return;
+    for (int i = 0; i < stb_arr_len(redmine_projects_instance); i++) {
+        free(redmine_projects_instance[i].name);
+        free(redmine_projects_instance[i].identifier);
+        if (redmine_projects_instance[i].description)
+            free(redmine_projects_instance[i].description);
     }
-    stb_arr_free(redmine_projects);
+    stb_arr_free(redmine_projects_instance);
 }
 
 static void redmine_versions_cleanup()
@@ -314,15 +345,6 @@ static void redmine_time_entry_activities_cleanup()
     stb_arr_free(redmine_time_entry_activities);
 }
 
-static const char* redmine_status_id_to_name(int id)
-{
-    for (int i = 0; i < stb_arr_len(redmine_issue_statuses); i++) {
-        if (redmine_issue_statuses[i].id == id)
-            return redmine_issue_statuses[i].name;
-    }
-    return NULL;
-}
-
 static const char* redmine_version_id_to_name(int id)
 {
     for (int i = 0; i < stb_arr_len(redmine_versions); i++) {
@@ -337,9 +359,7 @@ static void redmine_init()
     redmine_base_url = getenv("REDMINE_URL");
     redmine_api_key = getenv("REDMINE_API_KEY");
     redmine_user_id_init();
-    redmine_projects_init();
     redmine_versions_init();
-    redmine_issue_statuses_init();
     redmine_time_entry_activities_init();
 }
 
@@ -359,6 +379,7 @@ static McpToolCallResult* list_projects_handler(cJSON* params)
     if (!r)
         return NULL;
 
+    Project* redmine_projects = redmine_projects_get();
     if (stb_arr_len(redmine_projects) == 0) {
         mcp_tool_call_result_set_error(r);
         mcp_tool_call_result_add_text(r, "No projects available");
@@ -377,7 +398,6 @@ static McpToolCallResult* list_projects_handler(cJSON* params)
     }
     mcp_tool_call_result_add_text(r, result);
     sdsfree(result);
-
     return r;
 }
 
