@@ -198,6 +198,56 @@ static const char* redmine_status_id_to_name(int id)
 }
 
 /*
+ * Trackers
+ */
+
+typedef struct {
+    int id;
+    char* name;
+} Tracker;
+
+static Tracker* redmine_trackers_instance = NULL;
+
+static Tracker* redmine_trackers_get()
+{
+    if (redmine_trackers_instance)
+        return redmine_trackers_instance;
+
+    cJSON* json = redmine_get("trackers.json");
+    if (!json)
+        return NULL;
+
+    cJSON* trackers = cJSON_Select(json, ".trackers:a");
+    if (!trackers) {
+        cJSON_Delete(json);
+        return NULL;
+    }
+
+    cJSON* tracker = NULL;
+    cJSON_ArrayForEach(tracker, trackers) {
+        cJSON* id = cJSON_Select(tracker, ".id:n");
+        cJSON* name = cJSON_Select(tracker, ".name:s");
+        if (id && name) {
+            Tracker t;
+            t.id = id->valueint;
+            t.name = strdup(name->valuestring);
+            *stb_arr_add(redmine_trackers_instance) = t;
+        }
+    }
+
+    cJSON_Delete(json);
+    return redmine_trackers_instance;
+}
+
+static void redmine_trackers_cleanup()
+{
+    if (!redmine_trackers_instance) return;
+    for (int i = 0; i < stb_arr_len(redmine_trackers_instance); i++)
+        free(redmine_trackers_instance[i].name);
+    stb_arr_free(redmine_trackers_instance);
+}
+
+/*
  * Projects
  */
 
@@ -384,6 +434,7 @@ static void redmine_init()
 
 static void redmine_cleanup()
 {
+    redmine_trackers_cleanup();
     redmine_versions_cleanup();
     redmine_projects_cleanup();
     redmine_issue_statuses_cleanup();
@@ -1047,7 +1098,7 @@ static McpInputSchema tool_list_issues_schema[] = {
       .type = MCP_INPUT_SCHEMA_TYPE_NUMBER,
     },
     { .name = "tracker_id",
-      .description = "Filter by tracker ID (optional)",
+      .description = "Filter by tracker ID (optional, use list_trackers to get valid IDs)",
       .type = MCP_INPUT_SCHEMA_TYPE_NUMBER,
     },
     { .name = "fixed_version_id",
@@ -1254,7 +1305,7 @@ static McpInputSchema tool_create_issue_schema[] = {
       .type = MCP_INPUT_SCHEMA_TYPE_STRING,
     },
     { .name = "tracker_id",
-      .description = "Tracker ID (optional)",
+      .description = "Tracker ID (optional, use list_trackers to get valid IDs)",
       .type = MCP_INPUT_SCHEMA_TYPE_NUMBER,
     },
     { .name = "status_id",
@@ -1780,6 +1831,32 @@ static McpToolCallResult* list_issue_statuses_handler(cJSON* params)
     return r;
 }
 
+static McpToolCallResult* list_trackers_handler(cJSON* params)
+{
+    (void)params;
+
+    McpToolCallResult* r = mcp_tool_call_result_create();
+    if (!r)
+        return NULL;
+
+    Tracker* redmine_trackers = redmine_trackers_get();
+    if (stb_arr_len(redmine_trackers) == 0) {
+        mcp_tool_call_result_set_error(r);
+        mcp_tool_call_result_add_text(r, "No trackers available");
+        return r;
+    }
+
+    sds result = sdsempty();
+    for (int i = 0; i < stb_arr_len(redmine_trackers); i++) {
+        Tracker* t = &redmine_trackers[i];
+        result = sdscatprintf(result, "ID: %d - Name: %s\n", t->id, t->name);
+    }
+    mcp_tool_call_result_add_text(r, result);
+    sdsfree(result);
+
+    return r;
+}
+
 static McpToolCallResult* list_time_entry_activities_handler(cJSON* params)
 {
     (void)params;
@@ -1831,6 +1908,20 @@ static McpTool tool_list_issue_statuses = {
     .input_schema = {
         .type = MCP_INPUT_SCHEMA_TYPE_OBJECT,
         .properties = tool_list_issue_statuses_schema,
+    },
+};
+
+static McpInputSchema tool_list_trackers_schema[] = {
+    mcp_input_schema_null
+};
+
+static McpTool tool_list_trackers = {
+    .name = "list_trackers",
+    .description = "List all available tracker IDs for filtering and creating issues",
+    .handler = list_trackers_handler,
+    .input_schema = {
+        .type = MCP_INPUT_SCHEMA_TYPE_OBJECT,
+        .properties = tool_list_trackers_schema,
     },
 };
 
@@ -2047,6 +2138,7 @@ int main(int argc, const char* argv[])
     mcp_add_tool(&tool_list_projects);
     mcp_add_tool(&tool_list_versions);
     mcp_add_tool(&tool_list_issue_statuses);
+    mcp_add_tool(&tool_list_trackers);
     mcp_add_tool(&tool_list_activities);
     mcp_add_tool(&tool_search_wiki);
     mcp_add_tool(&tool_get_issue);
