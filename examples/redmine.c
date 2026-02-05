@@ -1502,6 +1502,121 @@ static McpTool tool_list_time_entries = {
     },
 };
 
+static McpToolCallResult* create_time_entry_handler(cJSON* params)
+{
+    McpToolCallResult* r = mcp_tool_call_result_create();
+    if (!r)
+        return NULL;
+
+    cJSON* issue_id = cJSON_Select(params, ".issue_id:n");
+    if (!issue_id) {
+        mcp_tool_call_result_set_error(r);
+        mcp_tool_call_result_add_text(r, "issue_id parameter is required");
+        return r;
+    }
+
+    cJSON* hours = cJSON_Select(params, ".hours:n");
+    if (!hours) {
+        mcp_tool_call_result_set_error(r);
+        mcp_tool_call_result_add_text(r, "hours parameter is required");
+        return r;
+    }
+
+    cJSON* activity_id = cJSON_Select(params, ".activity_id:n");
+    if (!activity_id) {
+        mcp_tool_call_result_set_error(r);
+        mcp_tool_call_result_add_text(r, "activity_id parameter is required");
+        return r;
+    }
+
+    cJSON* spent_on = cJSON_Select(params, ".spent_on:s");
+    if (!spent_on) {
+        mcp_tool_call_result_set_error(r);
+        mcp_tool_call_result_add_text(r, "spent_on parameter is required");
+        return r;
+    }
+
+    cJSON* data = cJSON_CreateObject();
+    cJSON* time_entry = cJSON_AddObjectToObject(data, "time_entry");
+    cJSON_AddNumberToObject(time_entry, "issue_id", issue_id->valuedouble);
+    cJSON_AddNumberToObject(time_entry, "hours", hours->valuedouble);
+    cJSON_AddNumberToObject(time_entry, "activity_id", activity_id->valuedouble);
+    cJSON_AddStringToObject(time_entry, "spent_on", spent_on->valuestring);
+
+    cJSON* comments = cJSON_Select(params, ".comments:s");
+    if (comments)
+        cJSON_AddStringToObject(data, "comments", comments->valuestring);
+
+    char* data_str = cJSON_PrintUnformatted(data);
+    cJSON_Delete(data);
+
+    cJSON* json = redmine_post("time_entries.json", data_str);
+    free(data_str);
+    if (!json) {
+        mcp_tool_call_result_set_error(r);
+        mcp_tool_call_result_add_text(r, "Failed to create time entry");
+        return r;
+    }
+
+    sds result = sdsempty();
+
+    cJSON* errors = cJSON_Select(json, ".errors:a");
+    if (errors) {
+        cJSON* error = NULL;
+        cJSON_ArrayForEach(error, errors) {
+            result = sdscatfmt(result, "%s\n", error->valuestring ? error->valuestring : "");
+        }
+        mcp_tool_call_result_set_error(r);
+        mcp_tool_call_result_add_text(r, result);
+        sdsfree(result);
+        return r;
+    }
+
+    cJSON* time_entry_id = cJSON_Select(json, ".time_entry.id:n");
+    if (time_entry_id)
+        result = sdscatprintf(result, "Time entry #%d created successfully\n", time_entry_id->valueint);
+
+    cJSON_Delete(json);
+
+    mcp_tool_call_result_add_text(r, result);
+    sdsfree(result);
+    return r;
+}
+
+static McpInputSchema tool_create_time_entry_schema[] = {
+    { .name = "issue_id",
+      .description = "Issue ID to associate time entry with (required)",
+      .type = MCP_INPUT_SCHEMA_TYPE_NUMBER,
+    },
+    { .name = "hours",
+      .description = "Time spent in hours (required)",
+      .type = MCP_INPUT_SCHEMA_TYPE_NUMBER,
+    },
+    { .name = "activity_id",
+      .description = "Activity ID (required, e.g., 9 for 'Design', 10 for 'Development')",
+      .type = MCP_INPUT_SCHEMA_TYPE_NUMBER,
+    },
+    { .name = "spent_on",
+      .description = "Date of the time entry in YYYY-MM-DD format (required)",
+      .type = MCP_INPUT_SCHEMA_TYPE_STRING,
+    },
+    { .name = "comments",
+      .description = "Comments/description for the time entry (optional)",
+      .type = MCP_INPUT_SCHEMA_TYPE_STRING,
+    },
+    mcp_input_schema_null
+};
+
+static McpTool tool_create_time_entry = {
+    .name = "create_time_entry",
+    .description = "Create a new time entry in Redmine",
+    .handler = create_time_entry_handler,
+    .input_schema = {
+        .type = MCP_INPUT_SCHEMA_TYPE_OBJECT,
+        .properties = tool_create_time_entry_schema,
+    },
+};
+
 static McpToolCallResult* get_project_handler(cJSON* params)
 {
     McpToolCallResult* r = mcp_tool_call_result_create();
@@ -1708,6 +1823,7 @@ int main(int argc, const char* argv[])
     mcp_add_tool(&tool_get_wiki_page);
     mcp_add_tool(&tool_list_wiki_pages);
     mcp_add_tool(&tool_list_time_entries);
+    mcp_add_tool(&tool_create_time_entry);
     mcp_add_tool(&tool_get_project);
     mcp_add_tool(&tool_get_user);
 
