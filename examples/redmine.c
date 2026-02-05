@@ -939,10 +939,17 @@ static McpToolCallResult* list_issues_handler(cJSON* params)
             "project_id=%d&", project_id_json->valueint);
     }
 
-    cJSON* status_id_json = cJSON_Select(params, ".status_id:n");
+    cJSON* status_id_json = cJSON_Select(params, ".status_id:s");
     if (status_id_json) {
-        query_len += snprintf(query + query_len, sizeof(query) - query_len,
-            "status_id=%d&", status_id_json->valueint);
+        const char* status_id_str = status_id_json->valuestring;
+        if (strcmp(status_id_str, "*") == 0) {
+            query_len += snprintf(query + query_len, sizeof(query) - query_len,
+                "status_id=*&");
+        } else {
+            int status_id = atoi(status_id_str);
+            query_len += snprintf(query + query_len, sizeof(query) - query_len,
+                "status_id=%d&", status_id);
+        }
     }
 
     cJSON* assigned_to_id_json = cJSON_Select(params, ".assigned_to_id:n");
@@ -1032,8 +1039,8 @@ static McpInputSchema tool_list_issues_schema[] = {
       .type = MCP_INPUT_SCHEMA_TYPE_NUMBER,
     },
     { .name = "status_id",
-      .description = "Filter by status ID (optional, use list_issue_statuses to get valid IDs)",
-      .type = MCP_INPUT_SCHEMA_TYPE_NUMBER,
+      .description = "Filter by status ID (optional, use * for all statuses or use list_issue_statuses to get valid IDs)",
+      .type = MCP_INPUT_SCHEMA_TYPE_STRING,
     },
     { .name = "assigned_to_id",
       .description = "Filter by assigned user ID (optional)",
