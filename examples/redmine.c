@@ -998,51 +998,61 @@ static McpToolCallResult* list_issues_handler(cJSON* params)
         if (offset < 0) offset = 0;
     }
 
-    char query[512] = "";
-    size_t query_len = 0;
+    char** opts = NULL;
+    char buf[32];
 
     cJSON* project_id_json = cJSON_Select(params, ".project_id:n");
     if (project_id_json) {
-        query_len += snprintf(query + query_len, sizeof(query) - query_len,
-            "project_id=%d&", project_id_json->valueint);
+        snprintf(buf, sizeof(buf), "%d", project_id_json->valueint);
+        *stb_arr_add(opts) = "project_id";
+        *stb_arr_add(opts) = strdup(buf);
     }
 
     cJSON* status_id_json = cJSON_Select(params, ".status_id:s");
     if (status_id_json) {
-        const char* status_id_str = status_id_json->valuestring;
-        if (strcmp(status_id_str, "*") == 0) {
-            query_len += snprintf(query + query_len, sizeof(query) - query_len,
-                "status_id=*&");
-        } else {
-            int status_id = atoi(status_id_str);
-            query_len += snprintf(query + query_len, sizeof(query) - query_len,
-                "status_id=%d&", status_id);
-        }
+        *stb_arr_add(opts) = "status_id";
+        *stb_arr_add(opts) = strdup(status_id_json->valuestring);
     }
 
     cJSON* assigned_to_id_json = cJSON_Select(params, ".assigned_to_id:n");
     if (assigned_to_id_json) {
-        query_len += snprintf(query + query_len, sizeof(query) - query_len,
-            "assigned_to_id=%d&", assigned_to_id_json->valueint);
+        snprintf(buf, sizeof(buf), "%d", assigned_to_id_json->valueint);
+        *stb_arr_add(opts) = "assigned_to_id";
+        *stb_arr_add(opts) = strdup(buf);
     }
 
     cJSON* tracker_id_json = cJSON_Select(params, ".tracker_id:n");
     if (tracker_id_json) {
-        query_len += snprintf(query + query_len, sizeof(query) - query_len,
-            "tracker_id=%d&", tracker_id_json->valueint);
+        snprintf(buf, sizeof(buf), "%d", tracker_id_json->valueint);
+        *stb_arr_add(opts) = "tracker_id";
+        *stb_arr_add(opts) = strdup(buf);
     }
 
     cJSON* fixed_version_id_json = cJSON_Select(params, ".fixed_version_id:n");
     if (fixed_version_id_json) {
-        query_len += snprintf(query + query_len, sizeof(query) - query_len,
-            "fixed_version_id=%d&", fixed_version_id_json->valueint);
+        snprintf(buf, sizeof(buf), "%d", fixed_version_id_json->valueint);
+        *stb_arr_add(opts) = "fixed_version_id";
+        *stb_arr_add(opts) = strdup(buf);
     }
 
-    char path[1024];
-    snprintf(path, sizeof(path), "issues.json?%slimit=%d&offset=%d&sort=updated_on:desc",
-        query, limit, offset);
+    snprintf(buf, sizeof(buf), "%d", limit);
+    *stb_arr_add(opts) = "limit";
+    *stb_arr_add(opts) = strdup(buf);
 
-    cJSON* json = redmine_get(path);
+    snprintf(buf, sizeof(buf), "%d", offset);
+    *stb_arr_add(opts) = "offset";
+    *stb_arr_add(opts) = strdup(buf);
+
+    *stb_arr_add(opts) = "sort";
+    *stb_arr_add(opts) = strdup("updated_on:desc");
+
+    cJSON* json = redmine_get_with_opts("issues.json", opts, stb_arr_len(opts) / 2);
+
+    for (int i = 0; i < stb_arr_len(opts); i += 2) {
+        free(opts[i + 1]);
+    }
+    stb_arr_free(opts);
+
     if (!json) {
         mcp_tool_call_result_set_error(r);
         mcp_tool_call_result_add_text(r, "Failed to fetch issues from Redmine");
