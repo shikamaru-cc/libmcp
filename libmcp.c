@@ -232,6 +232,9 @@ static cJSON* jsonrpc_tools_call(cJSON* params)
             cJSON_AddItemToArray(content, content_obj);
         }
 
+        if (result->is_error)
+            cJSON_AddBoolToObject(result_obj, "isError", cJSON_True);
+
         mcp_tool_call_result_delete(result);
         return result_obj;
     }
