@@ -1032,7 +1032,7 @@ static McpInputSchema tool_list_issues_schema[] = {
       .type = MCP_INPUT_SCHEMA_TYPE_NUMBER,
     },
     { .name = "status_id",
-      .description = "Filter by status ID (optional)",
+      .description = "Filter by status ID (optional, use list_issue_statuses to get valid IDs)",
       .type = MCP_INPUT_SCHEMA_TYPE_NUMBER,
     },
     { .name = "assigned_to_id",
@@ -1747,6 +1747,32 @@ static McpToolCallResult* list_versions_handler(cJSON* params)
     return r;
 }
 
+static McpToolCallResult* list_issue_statuses_handler(cJSON* params)
+{
+    (void)params;
+
+    McpToolCallResult* r = mcp_tool_call_result_create();
+    if (!r)
+        return NULL;
+
+    IssueStatus* redmine_issue_statuses = redmine_issue_statuses_get();
+    if (stb_arr_len(redmine_issue_statuses) == 0) {
+        mcp_tool_call_result_set_error(r);
+        mcp_tool_call_result_add_text(r, "No issue statuses available");
+        return r;
+    }
+
+    sds result = sdsempty();
+    for (int i = 0; i < stb_arr_len(redmine_issue_statuses); i++) {
+        IssueStatus* s = &redmine_issue_statuses[i];
+        result = sdscatprintf(result, "ID: %d - Name: %s\n", s->id, s->name);
+    }
+    mcp_tool_call_result_add_text(r, result);
+    sdsfree(result);
+
+    return r;
+}
+
 static McpToolCallResult* list_time_entry_activities_handler(cJSON* params)
 {
     (void)params;
@@ -1784,6 +1810,20 @@ static McpTool tool_list_versions = {
     .input_schema = {
         .type = MCP_INPUT_SCHEMA_TYPE_OBJECT,
         .properties = tool_list_versions_schema,
+    },
+};
+
+static McpInputSchema tool_list_issue_statuses_schema[] = {
+    mcp_input_schema_null
+};
+
+static McpTool tool_list_issue_statuses = {
+    .name = "list_issue_statuses",
+    .description = "List all available issue status IDs for filtering issues",
+    .handler = list_issue_statuses_handler,
+    .input_schema = {
+        .type = MCP_INPUT_SCHEMA_TYPE_OBJECT,
+        .properties = tool_list_issue_statuses_schema,
     },
 };
 
@@ -1999,6 +2039,7 @@ int main(int argc, const char* argv[])
     mcp_set_version("1.0.0");
     mcp_add_tool(&tool_list_projects);
     mcp_add_tool(&tool_list_versions);
+    mcp_add_tool(&tool_list_issue_statuses);
     mcp_add_tool(&tool_list_activities);
     mcp_add_tool(&tool_search_wiki);
     mcp_add_tool(&tool_get_issue);
