@@ -22,22 +22,9 @@ static size_t write_callback(void* contents, size_t size, size_t nmemb, void* us
     return realsize;
 }
 
-typedef struct {
-    int id;
-    char* name;
-    int project_id;
-} Version;
-
-typedef struct {
-    int id;
-    char* name;
-} TimeEntryActivity;
-
 static const char* redmine_base_url;
 static const char* redmine_api_key;
 static int redmine_user_id;
-static Version* redmine_versions = NULL;
-static TimeEntryActivity* redmine_time_entry_activities = NULL;
 
 static cJSON* redmine_get(const char* path)
 {
@@ -134,6 +121,20 @@ fail:
     if (headers) curl_slist_free_all(headers);
     if (response) free(response);
     return NULL;
+}
+
+static void redmine_user_id_init()
+{
+    cJSON* json = redmine_get("users/current.json");
+    if (!json)
+        return;
+
+    cJSON* user_id = cJSON_Select(json, ".user.id:n");
+    if (user_id) {
+        redmine_user_id = user_id->valueint;
+    }
+
+    cJSON_Delete(json);
 }
 
 /*
@@ -244,8 +245,35 @@ static Project* redmine_projects_get()
     return redmine_projects_instance;
 }
 
-static void redmine_versions_init()
+static void redmine_projects_cleanup()
 {
+    if (!redmine_projects_instance) return;
+    for (int i = 0; i < stb_arr_len(redmine_projects_instance); i++) {
+        free(redmine_projects_instance[i].name);
+        free(redmine_projects_instance[i].identifier);
+        if (redmine_projects_instance[i].description)
+            free(redmine_projects_instance[i].description);
+    }
+    stb_arr_free(redmine_projects_instance);
+}
+
+/*
+ * Versions
+ */
+
+typedef struct {
+    int id;
+    char* name;
+    int project_id;
+} Version;
+
+static Version* redmine_versions_instance = NULL;
+
+static Version* redmine_versions_get()
+{
+    if (redmine_versions_instance)
+        return redmine_versions_instance;
+
     Project* redmine_projects = redmine_projects_get();
     for (int i = 0; i < stb_arr_len(redmine_projects); i++) {
         char path[256];
@@ -270,57 +298,47 @@ static void redmine_versions_init()
                 v.id = id->valueint;
                 v.name = strdup(name->valuestring);
                 v.project_id = redmine_projects[i].id;
-                *stb_arr_add(redmine_versions) = v;
+                *stb_arr_add(redmine_versions_instance) = v;
             }
         }
 
         cJSON_Delete(json);
     }
-}
-
-static void redmine_user_id_init()
-{
-    cJSON* json = redmine_get("users/current.json");
-    if (!json)
-        return;
-
-    cJSON* user_id = cJSON_Select(json, ".user.id:n");
-    if (user_id) {
-        redmine_user_id = user_id->valueint;
-    }
-
-    cJSON_Delete(json);
-}
-
-static void redmine_projects_cleanup()
-{
-    if (!redmine_projects_instance) return;
-    for (int i = 0; i < stb_arr_len(redmine_projects_instance); i++) {
-        free(redmine_projects_instance[i].name);
-        free(redmine_projects_instance[i].identifier);
-        if (redmine_projects_instance[i].description)
-            free(redmine_projects_instance[i].description);
-    }
-    stb_arr_free(redmine_projects_instance);
+    return redmine_versions_instance;
 }
 
 static void redmine_versions_cleanup()
 {
-    for (int i = 0; i < stb_arr_len(redmine_versions); i++)
-        free(redmine_versions[i].name);
-    stb_arr_free(redmine_versions);
+    if (!redmine_versions_instance) return;
+    for (int i = 0; i < stb_arr_len(redmine_versions_instance); i++)
+        free(redmine_versions_instance[i].name);
+    stb_arr_free(redmine_versions_instance);
 }
 
-static void redmine_time_entry_activities_init()
+/*
+ * Time entry activities
+ */
+
+typedef struct {
+    int id;
+    char* name;
+} TimeEntryActivity;
+
+static TimeEntryActivity* redmine_time_entry_activities_instance = NULL;
+
+static TimeEntryActivity* redmine_time_entry_activities_get()
 {
+    if (redmine_time_entry_activities_instance)
+        return redmine_time_entry_activities_instance;
+
     cJSON* json = redmine_get("enumerations/time_entry_activities.json");
     if (!json)
-        return;
+        return NULL;
 
     cJSON* activities = cJSON_Select(json, ".time_entry_activities:a");
     if (!activities) {
         cJSON_Delete(json);
-        return;
+        return NULL;
     }
 
     cJSON* activity = NULL;
@@ -331,22 +349,25 @@ static void redmine_time_entry_activities_init()
             TimeEntryActivity t;
             t.id = id->valueint;
             t.name = strdup(name->valuestring);
-            *stb_arr_add(redmine_time_entry_activities) = t;
+            *stb_arr_add(redmine_time_entry_activities_instance) = t;
         }
     }
 
     cJSON_Delete(json);
+    return redmine_time_entry_activities_instance;
 }
 
 static void redmine_time_entry_activities_cleanup()
 {
-    for (int i = 0; i < stb_arr_len(redmine_time_entry_activities); i++)
-        free(redmine_time_entry_activities[i].name);
-    stb_arr_free(redmine_time_entry_activities);
+    if (!redmine_time_entry_activities_instance) return;
+    for (int i = 0; i < stb_arr_len(redmine_time_entry_activities_instance); i++)
+        free(redmine_time_entry_activities_instance[i].name);
+    stb_arr_free(redmine_time_entry_activities_instance);
 }
 
 static const char* redmine_version_id_to_name(int id)
 {
+    Version* redmine_versions = redmine_versions_get();
     for (int i = 0; i < stb_arr_len(redmine_versions); i++) {
         if (redmine_versions[i].id == id)
             return redmine_versions[i].name;
@@ -359,8 +380,6 @@ static void redmine_init()
     redmine_base_url = getenv("REDMINE_URL");
     redmine_api_key = getenv("REDMINE_API_KEY");
     redmine_user_id_init();
-    redmine_versions_init();
-    redmine_time_entry_activities_init();
 }
 
 static void redmine_cleanup()
@@ -370,6 +389,10 @@ static void redmine_cleanup()
     redmine_issue_statuses_cleanup();
     redmine_time_entry_activities_cleanup();
 }
+
+/*
+ * Tools
+ */
 
 static McpToolCallResult* list_projects_handler(cJSON* params)
 {
@@ -1687,6 +1710,7 @@ static McpToolCallResult* list_time_entry_activities_handler(cJSON* params)
     if (!r)
         return NULL;
 
+    TimeEntryActivity* redmine_time_entry_activities = redmine_time_entry_activities_get();
     if (stb_arr_len(redmine_time_entry_activities) == 0) {
         mcp_tool_call_result_set_error(r);
         mcp_tool_call_result_add_text(r, "No time entry activities available");
