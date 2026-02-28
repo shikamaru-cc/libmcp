@@ -2433,6 +2433,35 @@ static McpTool tool_get_user = {
     },
 };
 
+static McpToolCallResult* get_my_user_id_handler(cJSON* params)
+{
+    (void)params;
+
+    McpToolCallResult* r = mcp_tool_call_result_create();
+    if (!r)
+        return NULL;
+
+    sds result = sdsempty();
+    result = sdscatprintf(result, "%d", redmine_user_id);
+    mcp_tool_call_result_add_text(r, result);
+    sdsfree(result);
+    return r;
+}
+
+static McpInputSchema tool_get_my_user_id_schema[] = {
+    mcp_input_schema_null
+};
+
+static McpTool tool_get_my_user_id = {
+    .name = "get_my_user_id",
+    .description = "Get the current authenticated user's ID",
+    .handler = get_my_user_id_handler,
+    .input_schema = {
+        .type = MCP_INPUT_SCHEMA_TYPE_OBJECT,
+        .properties = tool_get_my_user_id_schema,
+    },
+};
+
 int main(int argc, const char* argv[])
 {
     curl_global_init(CURL_GLOBAL_DEFAULT);
@@ -2458,6 +2487,7 @@ int main(int argc, const char* argv[])
     mcp_add_tool(&tool_create_time_entry);
     mcp_add_tool(&tool_get_project);
     mcp_add_tool(&tool_get_user);
+    mcp_add_tool(&tool_get_my_user_id);
 
     fprintf(stderr, "Redmine MCP Server running...\n");
     mcp_main(argc, argv);
