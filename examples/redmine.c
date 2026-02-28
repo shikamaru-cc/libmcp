@@ -22,6 +22,71 @@ static size_t write_callback(void* contents, size_t size, size_t nmemb, void* us
     return realsize;
 }
 
+/*
+ * Base64 encoding for binary attachment data
+ */
+
+static const char base64_table[] =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+static char* base64_encode(const unsigned char* data, size_t input_length,
+                           size_t* output_length)
+{
+    *output_length = 4 * ((input_length + 2) / 3);
+    char* encoded = malloc(*output_length + 1);
+    if (!encoded) {
+        return NULL;
+    }
+
+    size_t i, j;
+    for (i = 0, j = 0; i < input_length;) {
+        uint32_t octet_a = i < input_length ? data[i++] : 0;
+        uint32_t octet_b = i < input_length ? data[i++] : 0;
+        uint32_t octet_c = i < input_length ? data[i++] : 0;
+        uint32_t triple = (octet_a << 16) | (octet_b << 8) | octet_c;
+
+        encoded[j++] = base64_table[(triple >> 18) & 0x3F];
+        encoded[j++] = base64_table[(triple >> 12) & 0x3F];
+        encoded[j++] = base64_table[(triple >> 6) & 0x3F];
+        encoded[j++] = base64_table[triple & 0x3F];
+    }
+
+    /* Add padding */
+    int mod = input_length % 3;
+    if (mod > 0) {
+        encoded[*output_length - 1] = '=';
+        if (mod == 1) {
+            encoded[*output_length - 2] = '=';
+        }
+    }
+    encoded[*output_length] = '\0';
+    return encoded;
+}
+
+/*
+ * Binary download support for attachments
+ */
+
+typedef struct {
+    char* data;
+    size_t size;
+} BinaryBuffer;
+
+static size_t write_binary_callback(void* contents, size_t size, size_t nmemb,
+                                    void* userp)
+{
+    size_t realsize = size * nmemb;
+    BinaryBuffer* buf = (BinaryBuffer*)userp;
+    char* new_data = realloc(buf->data, buf->size + realsize);
+    if (!new_data) {
+        return 0;
+    }
+    buf->data = new_data;
+    memcpy(buf->data + buf->size, contents, realsize);
+    buf->size += realsize;
+    return realsize;
+}
+
 static const char* redmine_base_url;
 static const char* redmine_api_key;
 static int redmine_user_id;
@@ -137,6 +202,58 @@ fail:
     if (curl) curl_easy_cleanup(curl);
     if (headers) curl_slist_free_all(headers);
     if (response) free(response);
+    return NULL;
+}
+
+static BinaryBuffer* redmine_download_binary(const char* url)
+{
+    CURL* curl = NULL;
+    struct curl_slist* headers = NULL;
+    BinaryBuffer* buf = NULL;
+
+    char auth_header[256];
+    snprintf(auth_header, sizeof(auth_header), "X-Redmine-API-Key: %s",
+             redmine_api_key);
+
+    curl = curl_easy_init();
+    if (curl == NULL) {
+        goto fail;
+    }
+
+    headers = curl_slist_append(NULL, auth_header);
+    if (headers == NULL) {
+        goto fail;
+    }
+
+    buf = malloc(sizeof(BinaryBuffer));
+    if (buf == NULL) {
+        goto fail;
+    }
+    buf->data = NULL;
+    buf->size = 0;
+
+    curl_easy_setopt(curl, CURLOPT_URL, url);
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_binary_callback);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, buf);
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+
+    CURLcode res = curl_easy_perform(curl);
+    if (res != CURLE_OK) {
+        goto fail;
+    }
+
+    curl_easy_cleanup(curl);
+    curl_slist_free_all(headers);
+    return buf;
+
+fail:
+    if (curl) curl_easy_cleanup(curl);
+    if (headers) curl_slist_free_all(headers);
+    if (buf) {
+        if (buf->data) free(buf->data);
+        free(buf);
+    }
     return NULL;
 }
 
@@ -1387,7 +1504,8 @@ static McpToolCallResult* get_wiki_page_handler(cJSON* params)
     char* title_escaped = curl_easy_escape(NULL, title, 0);
 
     char path[512];
-    snprintf(path, sizeof(path), "projects/%s/wiki/%s.json", project_escaped, title_escaped);
+    snprintf(path, sizeof(path), "projects/%s/wiki/%s.json?include=attachments",
+             project_escaped, title_escaped);
 
     curl_free(project_escaped);
     curl_free(title_escaped);
@@ -1430,6 +1548,50 @@ static McpToolCallResult* get_wiki_page_handler(cJSON* params)
         result = sdscatprintf(result, "%s\n", text->valuestring);
     }
 
+    /* List attachments if available */
+    cJSON* attachments = cJSON_Select(wiki_page, ".attachments:a");
+    if (attachments && cJSON_GetArraySize(attachments) > 0) {
+        result = sdscat(result, "\nAttachments:\n");
+        cJSON* attachment = NULL;
+        cJSON_ArrayForEach(attachment, attachments) {
+            cJSON* att_id = cJSON_Select(attachment, ".id:n");
+            cJSON* filename = cJSON_Select(attachment, ".filename:s");
+            cJSON* filesize = cJSON_Select(attachment, ".filesize:n");
+            cJSON* content_type = cJSON_Select(attachment, ".content_type:s");
+            cJSON* content_url = cJSON_Select(attachment, ".content_url:s");
+            cJSON* att_author = cJSON_Select(attachment, ".author.name:s");
+            cJSON* att_created_on = cJSON_Select(attachment, ".created_on:s");
+
+            if (att_id) {
+                result = sdscatprintf(result, "  ID: %d\n", att_id->valueint);
+            }
+            if (filename) {
+                result = sdscatprintf(result, "    Filename: %s\n",
+                                      filename->valuestring);
+            }
+            if (filesize) {
+                result = sdscatprintf(result, "    Size: %d bytes\n",
+                                      filesize->valueint);
+            }
+            if (content_type) {
+                result = sdscatprintf(result, "    Type: %s\n",
+                                      content_type->valuestring);
+            }
+            if (att_author) {
+                result = sdscatprintf(result, "    Author: %s\n",
+                                      att_author->valuestring);
+            }
+            if (att_created_on) {
+                result = sdscatprintf(result, "    Created: %s\n",
+                                      att_created_on->valuestring);
+            }
+            if (content_url) {
+                result = sdscatprintf(result, "    URL: %s\n",
+                                      content_url->valuestring);
+            }
+        }
+    }
+
     cJSON_Delete(json);
 
     mcp_tool_call_result_add_text(r, result);
@@ -1456,6 +1618,122 @@ static McpTool tool_get_wiki_page = {
     .input_schema = {
         .type = MCP_INPUT_SCHEMA_TYPE_OBJECT,
         .properties = tool_get_wiki_page_schema,
+    },
+};
+
+static McpToolCallResult* download_attachment_handler(cJSON* params)
+{
+    McpToolCallResult* r = mcp_tool_call_result_create();
+    if (!r) {
+        return NULL;
+    }
+
+    cJSON* attachment_id_json = cJSON_Select(params, ".attachment_id:n");
+    if (!attachment_id_json) {
+        mcp_tool_call_result_set_error(r);
+        mcp_tool_call_result_add_text(r, "attachment_id parameter is required");
+        return r;
+    }
+
+    int attachment_id = attachment_id_json->valueint;
+    char path[128];
+    snprintf(path, sizeof(path), "attachments/%d.json", attachment_id);
+
+    cJSON* json = redmine_get(path);
+    if (!json) {
+        mcp_tool_call_result_set_error(r);
+        mcp_tool_call_result_add_text(r, "Failed to fetch attachment info");
+        return r;
+    }
+
+    cJSON* content_url = cJSON_Select(json, ".attachment.content_url:s");
+    cJSON* content_type = cJSON_Select(json, ".attachment.content_type:s");
+    cJSON* filename = cJSON_Select(json, ".attachment.filename:s");
+
+    if (!content_url) {
+        cJSON_Delete(json);
+        mcp_tool_call_result_set_error(r);
+        mcp_tool_call_result_add_text(r, "Attachment content URL not found");
+        return r;
+    }
+
+    const char* mime = content_type ? content_type->valuestring
+                                    : "application/octet-stream";
+
+    /*
+     * For SVG files, return as text since SVG is XML text format.
+     * For other formats, return as base64-encoded image/blob.
+     */
+    int is_svg = mime && strcmp(mime, "image/svg+xml") == 0;
+
+    BinaryBuffer* buf = redmine_download_binary(content_url->valuestring);
+    if (!buf || !buf->data) {
+        cJSON_Delete(json);
+        if (buf) {
+            free(buf);
+        }
+        mcp_tool_call_result_set_error(r);
+        mcp_tool_call_result_add_text(r, "Failed to download attachment");
+        return r;
+    }
+
+    if (filename) {
+        sds info = sdsnew("Filename: ");
+        info = sdscat(info, filename->valuestring);
+        info = sdscat(info, "\n");
+        mcp_tool_call_result_add_text(r, info);
+        sdsfree(info);
+    }
+
+    if (is_svg) {
+        /* SVG: return as text */
+        char* text = malloc(buf->size + 1);
+        if (text) {
+            memcpy(text, buf->data, buf->size);
+            text[buf->size] = '\0';
+            mcp_tool_call_result_add_text(r, text);
+            free(text);
+        }
+        free(buf->data);
+        free(buf);
+    } else {
+        /* Other formats: return as base64-encoded image/blob */
+        size_t encoded_len;
+        char* encoded = base64_encode((unsigned char*)buf->data, buf->size,
+                                       &encoded_len);
+        free(buf->data);
+        free(buf);
+
+        if (!encoded) {
+            cJSON_Delete(json);
+            mcp_tool_call_result_set_error(r);
+            mcp_tool_call_result_add_text(r, "Failed to encode attachment");
+            return r;
+        }
+
+        mcp_tool_call_result_add_image(r, encoded, mime);
+        free(encoded);
+    }
+
+    cJSON_Delete(json);
+    return r;
+}
+
+static McpInputSchema tool_download_attachment_schema[] = {
+    { .name = "attachment_id",
+      .description = "Attachment ID to download (get from get_wiki_page or get_issue)",
+      .type = MCP_INPUT_SCHEMA_TYPE_NUMBER,
+    },
+    mcp_input_schema_null
+};
+
+static McpTool tool_download_attachment = {
+    .name = "download_attachment",
+    .description = "Download an attachment by ID",
+    .handler = download_attachment_handler,
+    .input_schema = {
+        .type = MCP_INPUT_SCHEMA_TYPE_OBJECT,
+        .properties = tool_download_attachment_schema,
     },
 };
 
@@ -2173,6 +2451,7 @@ int main(int argc, const char* argv[])
     mcp_add_tool(&tool_add_issue_note);
     mcp_add_tool(&tool_create_issue);
     mcp_add_tool(&tool_get_wiki_page);
+    mcp_add_tool(&tool_download_attachment);
     mcp_add_tool(&tool_list_wiki_pages);
     mcp_add_tool(&tool_list_time_entries);
     mcp_add_tool(&tool_list_time_entry_activities);
